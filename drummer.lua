@@ -11,6 +11,7 @@
 -- https://www.midi.org/specifications-old/item/gm-level-1-sound-set
 
 local ControlSpec = require "controlspec"
+local ParamSet = require "paramset"
 local Formatters = require "formatters"
 local MusicUtil = require "musicutil"
 local UI = require "ui"
@@ -22,20 +23,22 @@ local screen_dirty = true
 
 local midi_in_device
 
-local NUM_SAMPLES = 46
+local NUM_SAMPLES = 31
 
 local DRUM_ANI_TIMEOUT = 0.2
+local SHAKE_ANI_TIMEOUT = 0.4
 
 local GlobalView = {}
 local SampleView = {}
 
+local num_global_params
 local pages
 local global_view
 local sample_view
 
-local current_kit_id = 1
+local current_kit
 local current_sample_id = 0
-local set_kit
+local clear_kit, set_kit
 
 local samples_meta = {}
 for i = 0, NUM_SAMPLES - 1 do
@@ -53,18 +56,18 @@ specs.FILTER_FREQ = ControlSpec.new(20, 20000, "exp", 0, 20000, "Hz")
 specs.TUNE = ControlSpec.new(-12, 12, "lin", 0.5, 0, "ST")
 specs.AMP = ControlSpec.new(-48, 16, "db", 0, 0, "dB")
 
+local options = {}
+options.OFF_ON = {"Off", "On"}
+options.QUALITY = {"Low", "High"}
 
 local function add_global_params()
   
   local kit_names = {}
   for _, v in ipairs(kits) do table.insert(kit_names, v.name) end
-  params:add{type = "option", id = "kit", name = "Kit", options = kit_names, default = current_kit_id, action = function(value)
-    current_kit_id = value
+  params:add{type = "option", id = "kit", name = "Kit", options = kit_names, default = 1, action = function(value)
+    clear_kit()
     set_kit(value)
-    screen_dirty = true
   end}
-  
-  --TODO keep settings across kit swaps
   
   params:add{type = "number", id = "midi_in_device", name = "MIDI In Device", min = 1, max = 4, default = 1, action = reconnect_midi_ins}
   local channels = {"All"}
@@ -73,25 +76,25 @@ local function add_global_params()
   
   params:add{type = "number", id = "bend_range", name = "Pitch Bend Range", min = 1, max = 48, default = 2}
   
-  params:add{type = "option", id = "follow", name = "Follow", options = {"Off", "On"}, default = 1}
+  params:add{type = "option", id = "follow", name = "Follow", options = options.OFF_ON, default = 1}
   
   params:add_separator()
   
   params:add{type = "control", id = "filter_cutoff", name = "Filter Cutoff", controlspec = specs.FILTER_FREQ, formatter = Formatters.format_freq, action = function(value)
-    for k, v in ipairs(kits[current_kit_id].samples) do
+    for k, v in ipairs(current_kit.samples) do
       engine.filterFreq(k, value)
     end
     screen_dirty = true
   end}
   
-  params:add{type = "option", id = "quality", name = "Quality", options = {"Low", "High"}, default = 2, action = function(value)
+  params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
     local downSampleTo = 48000
     local bitDepth = 24
     if value == 1 then
       downSampleTo = 16000
       bitDepth = 8
     end
-    for k, v in ipairs(kits[current_kit_id].samples) do
+    for k, v in ipairs(current_kit.samples) do
       engine.downSampleTo(k, downSampleTo)
       engine.bitDepth(k, bitDepth)
     end
@@ -99,6 +102,8 @@ local function add_global_params()
   end}
   
   params:add_separator()
+  
+  num_global_params = params.count
   
 end
 
@@ -116,10 +121,9 @@ function set_kit(id)
   if #kits > 0 then
     if kits[id].samples then
       
-      params:clear()
-      add_global_params()
-      
       for k, v in ipairs(kits[id].samples) do
+        
+        if k > NUM_SAMPLES then break end
         
         local sample_id = k - 1
         
@@ -153,22 +157,29 @@ function set_kit(id)
         
         params:add_separator()
         
-        sample_view = SampleView.new()
       end
       
-      pages = UI.Pages.new(1, #kits[current_kit_id].samples + 1)
+      current_kit = kits[id]
+      sample_view = SampleView.new()
+      pages = UI.Pages.new(1, math.min(#current_kit.samples, NUM_SAMPLES) + 1)
       screen_dirty = true
       
     end
   end
 end
 
-local function clear_kit()
+function clear_kit()
   current_sample_id = 0
   engine.clearSamples(0, NUM_SAMPLES - 1)
   for i = 0, NUM_SAMPLES - 1 do
     samples_meta[i].ready = false
     samples_meta[i].length = 0
+  end
+  
+  -- Remove previous kit params
+  for i = #params.params, num_global_params + 1, -1 do
+    table.remove(params.params, i)
+    params.count = params.count - 1
   end
 end
 
@@ -208,13 +219,14 @@ local function note_on(voice_id, sample_id, vel)
     elseif voice_id == 38 or voice_id == 40 then
       global_view.timeouts.sd = DRUM_ANI_TIMEOUT
     elseif voice_id == 39 then
-      global_view.timeouts.cp = DRUM_ANI_TIMEOUT
+      global_view.timeouts.hc = DRUM_ANI_TIMEOUT
     elseif voice_id == 42 or voice_id == 44 then
       global_view.timeouts.ch = DRUM_ANI_TIMEOUT
     elseif voice_id == 46 then
       global_view.timeouts.oh = DRUM_ANI_TIMEOUT
     elseif voice_id == 49 or voice_id == 51 or voice_id == 55 or voice_id == 57 or voice_id == 59 then
       global_view.timeouts.cy = DRUM_ANI_TIMEOUT
+      global_view.timeouts.cy_shake = SHAKE_ANI_TIMEOUT
     elseif voice_id == 41 or voice_id == 43 or voice_id == 45 then
       global_view.timeouts.lt = DRUM_ANI_TIMEOUT
     elseif voice_id == 47 or voice_id == 48 then
@@ -302,7 +314,7 @@ local function midi_event(device_id, data)
       if msg.type == "note_on" then
         
         local sample_id
-        for k, v in ipairs(kits[current_kit_id].samples) do
+        for k, v in ipairs(current_kit.samples) do
           if v.note == msg.note then
             sample_id = k - 1
             break
@@ -350,10 +362,11 @@ function GlobalView.new()
     timeouts = {
       bd = 0,
       sd = 0,
-      cp = 0,
+      hc = 0,
       ch = 0,
       oh = 0,
       cy = 0,
+      cy_shake = 0,
       lt = 0,
       mt = 0,
       ht = 0,
@@ -370,7 +383,7 @@ function GlobalView:enc(n, delta)
     params:delta("filter_cutoff", delta)
     
   elseif n == 3 then
-    params:delta("quality", delta)
+    -- TODO compress
     
   end
   screen_dirty = true
@@ -381,14 +394,11 @@ function GlobalView:key(n, z)
     if n == 2 then
       
       if #kits > 0 then
-        current_kit_id = current_kit_id % #kits + 1
-        clear_kit()
-        set_kit(current_kit_id)
+        params:set("kit", params:get("kit") % #kits + 1)
       end
       
     elseif n == 3 then
-      -- TODO
-      -- note_on(kits[current_kit_id].samples[1].note, 1, 1)
+      params:set("quality", params:get("quality") % #options.QUALITY + 1)
       
     end
     screen_dirty = true
@@ -406,29 +416,32 @@ end
 
 function GlobalView:redraw()
   
+  -- local scale = util.explin(specs.FILTER_FREQ.minval, specs.FILTER_FREQ.maxval, 0, 1, params:get("filter_cutoff")) --TODO
+  
   -- Draw drum kit
-  
-  -- local scale = util.explin(specs.FILTER_FREQ.minval, specs.FILTER_FREQ.maxval, 0.65, 1, params:get("filter_cutoff")) --TODO
-  local cx, cy = 63, 40
-  
-  -- screen.line_width(0.75)
+
+  local cx, cy = 63, 29
   
   local nod = 0
+  local hair = 0
   if self.timeouts.bd > 0 or self.timeouts.sd > 0 then nod = 1 end
+  if self.timeouts.cy > 0 or self.timeouts.hc > 0 then
+    hair = 1.5
+    nod = -1
+  end
   
-  -- Hair
+  -- Hair outline
   screen.level(3)
-  -- screen.circle(cx, cy - 16, 3.5)
-  screen.move(cx - 4.5, cy - 11)
+  screen.move(cx - 4.5 - hair, cy - 11)
   screen.line(cx - 4.5, cy - 16 + nod * 0.5)
   screen.arc(cx, cy - 16 + nod * 0.5, 4.5, math.pi, math.pi * 2)
-  screen.line(cx + 4.5, cy - 11)
+  screen.line(cx + 4.5 + hair, cy - 11)
   screen.stroke()
-  
-  -- Bangs
-  screen.move(cx - 3, cy - 15.5 + nod)
-  screen.line(cx + 3, cy - 15.5 + nod)
-  screen.stroke()
+  -- Bangs / glasses
+  local glasses_line = 1
+  if params:get("quality") == 1 then glasses_line = 2 end
+  screen.rect(cx - 3, cy - 16 + nod, 6, glasses_line)
+  screen.fill()
   -- Cheeks
   screen.move(cx + 1.5, cy - 13 + nod)
   screen.line(cx + 1.5, cy - 15.5 + nod)
@@ -437,46 +450,29 @@ function GlobalView:redraw()
   screen.line(cx - 1.5, cy - 15.5 + nod)
   screen.stroke()
   -- Jaw
-  screen.arc(cx, cy - 14 + nod, 2, math.pi * 2, math.pi)
+  screen.arc(cx, cy - 13.5 + nod, 1.5, math.pi * 2, math.pi)
   screen.stroke()
   
-  -- Shoulders
-  -- screen.arc(cx - 3, cy - 6, 3.5, math.pi, math.pi * 1.5)
-  -- screen.arc(cx + 3, cy - 6, 3.5, math.pi * 1.5, math.pi * 2)
-  -- screen.move(cx - 7.5, cy - 9.5)
-  -- screen.line(cx + 7.5, cy - 9.5)
-  -- screen.stroke()
-  -- Arm
-  -- screen.move(cx + 4, cy - 8.5)
-  -- screen.line(cx + 15.5, cy - 2)
-  -- screen.stroke()
-  
-  -- CP
-  if self.timeouts.cp > 0 then
+  -- HC
+  if self.timeouts.hc > 0 then
     screen.level(15)
     screen.move(cx, cy - 10)
-    screen.line(cx + 6, cy - 16)
+    screen.line(cx + 6, cy - 17)
     screen.stroke()
     screen.move(cx + 5, cy - 10)
-    screen.line(cx + 9, cy - 16)
+    screen.line(cx + 9, cy - 17)
     screen.stroke()
   end
   
-  -- BD
-  if self.timeouts.bd > 0 then screen.level(15) else screen.level(3) end
-  screen.circle(cx, cy + 9, 10.5)
-  screen.stroke()
-  
   -- SD
   if self.timeouts.sd > 0 then screen.level(15) else screen.level(3) end
-  screen.move(cx + 11, cy + 0.5)
-  screen.line(cx + 22.5, cy + 0.5)
-  screen.line(cx + 22.5, cy + 5.5)
-  screen.line(cx + 13, cy + 5.5)
+  screen.rect(cx + 10.5, cy + 0.5, 12, 5)
   screen.stroke()
   -- Stand
   screen.move(cx + 16.5, cy + 5.5)
   screen.line(cx + 16.5, cy + 14)
+  if self.timeouts.sd > 0 then screen.level(15) else screen.level(4) end
+  screen.move(cx + 16.5, cy + 14)
   screen.line(cx + 20.5, cy + 19)
   screen.stroke()
   screen.move(cx + 16.5, cy + 14)
@@ -484,7 +480,19 @@ function GlobalView:redraw()
   screen.stroke()
   
   -- HH
-  if self.timeouts.ch > 0 or self.timeouts.oh > 0 then screen.level(15) else screen.level(3) end
+  screen.level(3)
+  if self.timeouts.ch > 0 or self.timeouts.oh > 0 then
+    if self.timeouts.hc <= 0 then
+      -- Arm
+      screen.level(4)
+      screen.move(cx + 14, cy - 7.5)
+      local hand_y = -9
+      if self.timeouts.oh > 0 then hand_y = -10.5 end
+      screen.line(cx + 20.5, cy + hand_y)
+      screen.stroke()
+    end
+    screen.level(15)
+  end
   local mod_y_l, mod_y_r = 0, 0
   if self.timeouts.oh > 0 then
     mod_y_l = math.random(-2, -1)
@@ -499,6 +507,9 @@ function GlobalView:redraw()
   -- Stand
   screen.move(cx + 25.5, cy - 3.5)
   screen.line(cx + 25.5, cy + 14)
+  screen.stroke()
+  if self.timeouts.ch > 0 or self.timeouts.oh > 0 then screen.level(15) else screen.level(4) end
+  screen.move(cx + 25.5, cy + 14)
   screen.line(cx + 29.5, cy + 19)
   screen.stroke()
   screen.move(cx + 25.5, cy + 14)
@@ -507,10 +518,7 @@ function GlobalView:redraw()
   
   -- LT
   if self.timeouts.lt > 0 then screen.level(15) else screen.level(3) end
-  screen.move(cx - 13, cy + 2.5)
-  screen.line(cx - 19.5, cy + 2.5)
-  screen.line(cx - 19.5, cy + 15.5)
-  screen.line(cx - 12, cy + 15.5)
+  screen.rect(cx - 19.5, cy + 2.5, 10, 13)
   screen.stroke()
   -- Feet
   screen.move(cx - 19.5, cy + 16)
@@ -519,38 +527,93 @@ function GlobalView:redraw()
   screen.move(cx - 13.5, cy + 16)
   screen.line(cx - 13.5, cy + 19)
   screen.stroke()
+  -- Stripe
+  screen.level(1)
+  screen.move(cx - 18, cy + 4.5)
+  screen.line(cx - 11, cy + 4.5)
+  screen.stroke()
+  screen.move(cx - 15.5, cy + 5)
+  screen.line(cx - 15.5, cy + 14)
+  screen.stroke()
   
   -- MT
   if self.timeouts.mt > 0 then screen.level(15) else screen.level(3) end
-  screen.move(cx - 8, cy - 0.5)
-  screen.line(cx - 12.5, cy - 0.5)
-  screen.line(cx - 12.5, cy - 7.5)
-  screen.line(cx - 2.5, cy - 7.5)
-  screen.line(cx - 2.5, cy - 4)
+  screen.rect(cx - 12.5, cy - 7.5, 10, 7)
+  screen.stroke()
+  screen.level(1)
+  screen.move(cx - 11, cy - 5.5)
+  screen.line(cx - 4, cy - 5.5)
   screen.stroke()
   
   -- HT
   if self.timeouts.ht > 0 then screen.level(15) else screen.level(3) end
-  screen.move(cx + 7, cy - 1.5)
-  screen.line(cx + 12.5, cy - 1.5)
-  screen.line(cx + 12.5, cy - 7.5)
-  screen.line(cx + 2.5, cy - 7.5)
-  screen.line(cx + 2.5, cy - 4)
+  screen.rect(cx + 2.5, cy - 7.5, 10, 6)
+  screen.stroke()
+  screen.level(1)
+  screen.move(cx + 11, cy - 5.5)
+  screen.line(cx + 4, cy - 5.5)
   screen.stroke()
   
   -- CY
-  if self.timeouts.cy > 0 then screen.level(15) else screen.level(3) end
-  screen.move(cx - 17, cy - 14)
-  screen.line(cx - 30, cy - 20)
+  screen.level(3)
+  if self.timeouts.cy > 0 then
+    if self.timeouts.hc <= 0 then
+      -- Arm
+      screen.level(4)
+      screen.move(cx - 8, cy - 9.5)
+      screen.line(cx - 17, cy - 16)
+      screen.stroke()
+    end
+    screen.level(15)
+  end
+  local cym_rotation = 0
+  if params:get("quality") ~= 1 then
+    cym_rotation = math.pi * 2 * 0.06
+  end
+  if self.timeouts.cy_shake > 0 then
+    cym_rotation = cym_rotation + math.sin(self.timeouts.cy_shake * 40) * 0.7 * util.linlin(0, SHAKE_ANI_TIMEOUT, 0, 1, self.timeouts.cy_shake)
+  end
+  local cos_cym_rotation = math.cos(cym_rotation) * 7
+  local sin_cym_rotation = math.sin(cym_rotation) * 7
+  screen.move(cx - 23.5 - cos_cym_rotation, cy - 16.5 - sin_cym_rotation)
+  screen.line(cx - 23.5 + cos_cym_rotation, cy - 16.5 + sin_cym_rotation)
   screen.stroke()
   -- Stand
   screen.move(cx - 23.5, cy - 16.5)
   screen.line(cx - 23.5, cy + 14)
+  screen.stroke()
+  if self.timeouts.cy > 0 then screen.level(15) else screen.level(4) end
+  screen.move(cx - 23.5, cy + 14)
   screen.line(cx - 27.5, cy + 19)
   screen.stroke()
   screen.move(cx - 23.5, cy + 14)
   screen.line(cx - 19.5, cy + 19)
   screen.stroke()
+  
+  -- BD
+  if params:get("quality") == 1 then
+    screen.level(0)
+    screen.rect(cx - 11, cy - 2, 22, 22)
+    screen.fill()
+    if self.timeouts.bd > 0 then screen.level(15) else screen.level(5) end
+    screen.rect(cx - 9.5, cy - 0.5, 19, 19)
+    screen.stroke()
+    screen.level(1)
+    screen.rect(cx + 0.5, cy + 9.5, 5, 5)
+    screen.stroke()
+  else
+    screen.aa(0)
+    screen.level(0)
+    screen.circle(cx, cy + 9, 13)
+    screen.fill()
+    screen.aa(1)
+    if self.timeouts.bd > 0 then screen.level(15) else screen.level(5) end
+    screen.circle(cx, cy + 9, 10.5)
+    screen.stroke()
+    screen.level(2)
+    screen.circle(cx + 3, cy + 12, 2.5)
+    screen.stroke()
+  end
   
   -- CB
   if self.timeouts.cb > 0 then
@@ -560,13 +623,10 @@ function GlobalView:redraw()
     screen.fill()
   end
   
-  -- screen.line_width(1)
-  
   -- Title
   screen.level(15)
-  -- screen.move(63, 60)
-  screen.move(63, 9)
-  screen.text_center(kits[current_kit_id].name)
+  screen.move(63, 60)
+  screen.text_center(current_kit.name)
   screen.fill()
   
 end
@@ -627,7 +687,7 @@ function SampleView:key(n, z)
       self.amp_dial.active = self.tab_id == 2
       
     elseif n == 3 then
-      note_on(kits[current_kit_id].samples[current_sample_id + 1].note, current_sample_id, 1)
+      note_on(current_kit.samples[current_sample_id + 1].note, current_sample_id, 1)
       
     end
     screen_dirty = true
@@ -638,9 +698,9 @@ function SampleView:redraw()
   
   screen.level(3)
   screen.move(4, 9)
-  screen.text(MusicUtil.note_num_to_name(kits[current_kit_id].samples[current_sample_id + 1].note, true))
+  screen.text(MusicUtil.note_num_to_name(current_kit.samples[current_sample_id + 1].note, true))
   
-  local title = kits[current_kit_id].samples[current_sample_id + 1].file
+  local title = current_kit.samples[current_sample_id + 1].file
   title = string.sub(title, string.find(title, "/[^/]*$") + 1, string.find(title, ".[^.]*$") - 1)
   if string.len(title) > 19 then
     title = string.sub(title, 1, 16) .. "..."
@@ -735,10 +795,10 @@ function init()
   
   screen_redraw_metro:start(1 / SCREEN_FRAMERATE)
   
-  
   engine.generateWaveforms(0)
   
   load_kits()
+  add_global_params()
   set_kit(1)
   
 end
