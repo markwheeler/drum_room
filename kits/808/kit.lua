@@ -3,11 +3,13 @@ return {
   samples = {
     {
       note = 35,
-      file = "audio/common/808/808-BS.wav"
+      file = "audio/common/808/808-BS.wav",
+      group = 2
     },
     {
       note = 36,
-      file = "audio/common/808/808-BD.wav"
+      file = "audio/common/808/808-BD.wav",
+      group = 2
     },
     {
       note = 37,
@@ -23,7 +25,8 @@ return {
     },
     {
       note = 42,
-      file = "audio/common/808/808-CH.wav"
+      file = "audio/common/808/808-CH.wav",
+      group = 1
     },
     {
       note = 43,
@@ -31,7 +34,8 @@ return {
     },
     {
       note = 46,
-      file = "audio/common/808/808-OH.wav"
+      file = "audio/common/808/808-OH.wav",
+      group = 1
     },
     {
       note = 47,

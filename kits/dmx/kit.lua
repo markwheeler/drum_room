@@ -15,11 +15,13 @@ return {
     },
     {
       note = 42,
-      file = "code/drummer/kits/dmx/closed-hat.wav"
+      file = "code/drummer/kits/dmx/closed-hat.wav",
+      group = 1
     },
     {
       note = 46,
-      file = "code/drummer/kits/dmx/open-hat.wav"
+      file = "code/drummer/kits/dmx/open-hat.wav",
+      group = 1
     }
   }
 }

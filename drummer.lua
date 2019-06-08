@@ -10,6 +10,7 @@
 -- Mapping based on General MIDI Percussion Key Map
 -- https://www.midi.org/specifications-old/item/gm-level-1-sound-set
 
+
 local ControlSpec = require "controlspec"
 local ParamSet = require "paramset"
 local Formatters = require "formatters"
@@ -44,6 +45,7 @@ local samples_meta = {}
 for i = 0, NUM_SAMPLES - 1 do
   samples_meta[i] = {
     ready = false,
+    playing = false,
     length = 0
   }
 end
@@ -173,6 +175,7 @@ function clear_kit()
   engine.clearSamples(0, NUM_SAMPLES - 1)
   for i = 0, NUM_SAMPLES - 1 do
     samples_meta[i].ready = false
+    samples_meta[i].playing = false
     samples_meta[i].length = 0
   end
   
@@ -181,6 +184,8 @@ function clear_kit()
     table.remove(params.params, i)
     params.count = params.count - 1
   end
+  
+  screen_dirty = true
 end
 
 local function sample_loaded(id, streaming, num_frames, num_channels, sample_rate)
@@ -193,13 +198,26 @@ local function sample_loaded(id, streaming, num_frames, num_channels, sample_rat
   engine.ampAttack(id, 0)
   engine.filterFreq(id, 24000)
   
-  screen_dirty = false
+  screen_dirty = true
 end
 
 local function sample_load_failed(id, error_status)
   samples_meta[id].ready = false
+  samples_meta[id].playing = false
   samples_meta[id].length = 0
   print("Sample load failed", error_status)
+  screen_dirty = true
+end
+
+local function play_position(sample_id, voice_id, position)
+  if not samples_meta[sample_id].playing then
+    samples_meta[sample_id].playing = true
+    screen_dirty = true
+  end
+end
+
+local function voice_freed(sample_id, voice_id)
+  samples_meta[sample_id].playing = false
   screen_dirty = true
 end
 
@@ -211,8 +229,15 @@ local function note_on(voice_id, sample_id, vel)
   
   if samples_meta[sample_id].ready then
     vel = vel or 1
-    -- print("note_on", voice_id, sample_id, vel)
-    engine.noteOn(voice_id, sample_id, MusicUtil.note_num_to_freq(60), vel)
+    
+    -- Choke group
+    local grouped_voice_id = voice_id
+    if current_kit.samples[sample_id + 1].group then
+      grouped_voice_id = 128 + current_kit.samples[sample_id + 1].group
+    end
+    
+    -- print("note_on", grouped_voice_id, sample_id, vel)
+    engine.noteOn(grouped_voice_id, sample_id, MusicUtil.note_num_to_freq(60), vel)
     
     if voice_id == 35 or voice_id == 36 then
       global_view.timeouts.bd = DRUM_ANI_TIMEOUT
@@ -296,6 +321,12 @@ local function osc_event(path, args, from)
     
   elseif path == "/engineSampleLoadFailed" then
     sample_load_failed(args[1], args[2])
+    
+  elseif path == "/enginePlayPosition" then
+    play_position(args[1], args[2], args[3])
+    
+  elseif path == "/engineVoiceFreed" then
+    voice_freed(args[1], args[2])
     
   end
 end
@@ -696,7 +727,7 @@ end
 
 function SampleView:redraw()
   
-  screen.level(3)
+  if samples_meta[current_sample_id].playing then screen.level(15) else screen.level(3) end
   screen.move(4, 9)
   screen.text(MusicUtil.note_num_to_name(current_kit.samples[current_sample_id + 1].note, true))
   
