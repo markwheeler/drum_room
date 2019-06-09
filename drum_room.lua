@@ -10,7 +10,7 @@
 --  K2 : Kit
 --  K3 : Quality
 --  E2 : Filter
---  E3 : Compress
+--  E3 : Compression
 --
 -- SAMPLES:
 --  K2 : Focus
@@ -53,6 +53,8 @@ local shift_mode = false
 local current_kit
 local current_sample_id = 0
 local clear_kit, set_kit, set_quality
+
+local count = 0 --TODO remove
 
 local samples_meta = {}
 for i = 0, NUM_SAMPLES - 1 do
@@ -101,6 +103,20 @@ local function add_global_params()
       engine.filterFreq(k - 1, value)
     end
     screen_dirty = true
+  end}
+  
+  params:add{type = "control", id = "compression", name = "Compression", controlspec = ControlSpec.UNIPOLAR, action = function(value)
+    -- if value == 0 then
+    --   audio.comp_off()
+    -- else
+    --   audio.comp_on()
+    -- end
+    -- audio.comp_mix(util.linlin(0, 0.25, 0, 1, value))
+    -- audio.comp_param("attack", util.linlin(0.5, 1, 1, 10, value))
+    -- audio.comp_param("threshold", util.linlin(0, 0.75, -0.0001, -48, value))
+    -- audio.comp_param("gain_post", util.linlin(0, 0.5, 0.0001, 24, value))
+    -- print("post gain", util.linlin(0, 0.5, 0.0001, 24, value), "thresh", util.linlin(0, 0.5, -0.0001, -48, value))
+    -- screen_dirty = true
   end}
   
   params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
@@ -414,6 +430,22 @@ end
 
 local function update()
   global_view:update()
+  
+  --TODO test pattern
+  -- if count % 8 == 0 then
+  --   -- note_on(current_kit.samples[2].note, 1, 1)
+  --   note_on(current_kit.samples[1].note, 0, 1)
+  -- end
+  -- if count % 16 == 0 then
+  --   note_on(current_kit.samples[4].note, 3, 1)
+  -- end
+  -- if count % 6 == 0 then
+  --   note_on(current_kit.samples[8].note, 7, 1)
+  -- end
+  -- if count % 32 == 0 then
+  --   note_on(current_kit.samples[10].note, 9, 1)
+  -- end
+  count = count + 1
 end
 
 
@@ -447,7 +479,7 @@ function GlobalView:enc(n, delta)
     params:delta("filter_cutoff", delta * 2)
     
   elseif n == 3 then
-    -- TODO compress
+    params:delta("compression", delta * 2)
     
   end
   screen_dirty = true
@@ -494,6 +526,18 @@ function GlobalView:redraw()
       screen.stroke()
     end
   end
+  
+  -- Draw compressor
+  screen.level(15)
+  screen.move(0.5, 62)
+  screen.line(0.5, util.linlin(0, 1, 62, 2, params:get("compression")))
+  screen.stroke()
+  
+  -- Title
+  screen.level(15)
+  screen.move(63, 60)
+  screen.text_center(current_kit.name)
+  screen.fill()
   
   -- Draw drum kit
   local cx, cy = 62, 29
@@ -698,12 +742,6 @@ function GlobalView:redraw()
     screen.text("Donk!")
     screen.fill()
   end
-  
-  -- Title
-  screen.level(15)
-  screen.move(63, 60)
-  screen.text_center(current_kit.name)
-  screen.fill()
   
 end
 
