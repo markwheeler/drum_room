@@ -1,10 +1,22 @@
--- Drummer
+-- Drum Room
 -- 1.0.0 @markeats
--- llllllll.co/t/drummer
+-- llllllll.co/t/drum-room
 --
--- Description.
+-- MIDI-triggered drum kits.
 --
--- E1 : Sound
+-- E1 : Page
+--
+-- ROOM:
+--  K2 : Kit
+--  K3 : Quality
+--  E2 : Filter
+--  E3 : Compress
+--
+-- SAMPLES:
+--  K2 : Focus
+--  K3 : Mute
+--  K1+K3 : Trigger
+--  E2/3 : Params
 --
 
 -- Mapping based on General MIDI Percussion Key Map
@@ -36,15 +48,17 @@ local num_global_params
 local pages
 local global_view
 local sample_view
+local shift_mode = false
 
 local current_kit
 local current_sample_id = 0
-local clear_kit, set_kit
+local clear_kit, set_kit, set_quality
 
 local samples_meta = {}
 for i = 0, NUM_SAMPLES - 1 do
   samples_meta[i] = {
     ready = false,
+    error_status = "",
     playing = false,
     length = 0
   }
@@ -54,9 +68,9 @@ local kits = {}
 
 local specs = {}
 specs.UNIPOLAR_DEFAULT_MAX = ControlSpec.new(0, 1, "lin", 0, 1, "")
-specs.FILTER_FREQ = ControlSpec.new(20, 20000, "exp", 0, 20000, "Hz")
+specs.FILTER_FREQ = ControlSpec.new(60, 20000, "exp", 0, 20000, "Hz")
 specs.TUNE = ControlSpec.new(-12, 12, "lin", 0.5, 0, "ST")
-specs.AMP = ControlSpec.new(-48, 16, "db", 0, 0, "dB")
+specs.AMP = ControlSpec.new(-48, 32, "db", 0, 0, "dB")
 
 local options = {}
 options.OFF_ON = {"Off", "On"}
@@ -84,21 +98,14 @@ local function add_global_params()
   
   params:add{type = "control", id = "filter_cutoff", name = "Filter Cutoff", controlspec = specs.FILTER_FREQ, formatter = Formatters.format_freq, action = function(value)
     for k, v in ipairs(current_kit.samples) do
-      engine.filterFreq(k, value)
+      engine.filterFreq(k - 1, value)
     end
     screen_dirty = true
   end}
   
   params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
-    local downSampleTo = 48000
-    local bitDepth = 24
-    if value == 1 then
-      downSampleTo = 16000
-      bitDepth = 8
-    end
     for k, v in ipairs(current_kit.samples) do
-      engine.downSampleTo(k, downSampleTo)
-      engine.bitDepth(k, bitDepth)
+      set_quality(k - 1, value)
     end
     screen_dirty = true
   end}
@@ -110,11 +117,11 @@ local function add_global_params()
 end
 
 local function load_kits()
-  local search_path = _path.code .. "drummer/kits/"
+  local search_path = _path.code .. "drum_room/kits/"
   for _, v in ipairs(util.scandir(search_path)) do
     local kit_path = search_path .. v .. "kit.lua"
     if util.file_exists(kit_path) then
-      table.insert(kits, include("drummer/kits/" .. v .. "kit"))
+      table.insert(kits, include("drum_room/kits/" .. v .. "kit"))
     end
   end
 end
@@ -129,7 +136,11 @@ function set_kit(id)
         
         local sample_id = k - 1
         
-        engine.loadSample(sample_id, _path.dust .. v.file)
+        if v.note < 0 or v.note > 127 then
+          samples_meta[sample_id].error_status = "Invalid note number"
+        else
+          engine.loadSample(sample_id, _path.dust .. v.file)
+        end
         
         local file = string.sub(v.file, string.find(v.file, "/[^/]*$") + 1, string.find(v.file, ".[^.]*$") - 1)
         local name_prefix = string.sub(file, 1, 7)
@@ -175,8 +186,10 @@ function clear_kit()
   engine.clearSamples(0, NUM_SAMPLES - 1)
   for i = 0, NUM_SAMPLES - 1 do
     samples_meta[i].ready = false
-    samples_meta[i].playing = false
+    samples_meta[i].error_status = ""
     samples_meta[i].length = 0
+    samples_meta[i].playing = false
+    samples_meta[i].mute = false
   end
   
   -- Remove previous kit params
@@ -190,22 +203,25 @@ end
 
 local function sample_loaded(id, streaming, num_frames, num_channels, sample_rate)
   samples_meta[id].ready = true
+  samples_meta[id].error_status = ""
   samples_meta[id].length = num_frames / sample_rate
   
   -- Set sample defaults
-  
   engine.playMode(id, 3)
   engine.ampAttack(id, 0)
-  engine.filterFreq(id, 24000)
+  engine.filterReso(id, 0.15)
+  engine.filterFreq(id, params:get("filter_cutoff"))
+  set_quality(id, params:get("quality"))
   
   screen_dirty = true
 end
 
 local function sample_load_failed(id, error_status)
   samples_meta[id].ready = false
-  samples_meta[id].playing = false
+  samples_meta[id].error_status = error_status or "?"
   samples_meta[id].length = 0
-  print("Sample load failed", error_status)
+  samples_meta[id].playing = false
+  print("Sample load failed", id, error_status)
   screen_dirty = true
 end
 
@@ -227,7 +243,7 @@ end
 
 local function note_on(voice_id, sample_id, vel)
   
-  if samples_meta[sample_id].ready then
+  if samples_meta[sample_id].ready and not samples_meta[sample_id].mute then
     vel = vel or 1
     
     -- Choke group
@@ -262,6 +278,11 @@ local function note_on(voice_id, sample_id, vel)
       global_view.timeouts.cb = DRUM_ANI_TIMEOUT
     end
     
+    if params:get("follow") > 1 and pages.index > 1 then
+      pages:set_index(sample_id + 2)
+      set_sample_id(sample_id)
+    end
+    
     screen_dirty = true
   end
 end
@@ -276,6 +297,17 @@ end
 
 local function set_pitch_bend_all(bend_st)
   engine.pitchBendAll(MusicUtil.interval_to_ratio(bend_st))
+end
+
+function set_quality(sample_id, quality)
+  local downSampleTo = 48000
+  local bitDepth = 24
+  if quality == 1 then
+    downSampleTo = 16000
+    bitDepth = 8
+  end
+  engine.downSampleTo(sample_id, downSampleTo)
+  engine.bitDepth(sample_id, bitDepth)
 end
 
 
@@ -304,13 +336,18 @@ end
 -- Key input
 function key(n, z)
   
-  if pages.index == 1 then
-    global_view:key(n, z)
+  if n == 1 then
+    shift_mode = z == 1
+    
   else
-    sample_view:key(n, z)
+    if pages.index == 1 then
+      global_view:key(n, z)
+    else
+      sample_view:key(n, z)
+    end
+    screen_dirty = true
   end
   
-  screen_dirty = true
 end
 
 -- OSC events
@@ -354,10 +391,6 @@ local function midi_event(device_id, data)
         
         if sample_id then
           note_on(msg.note, sample_id, msg.vel / 127)
-          
-          if params:get("follow") > 1 then
-            set_sample_id(sample_id)
-          end
         end
       
       -- Pitch bend
@@ -411,7 +444,7 @@ end
 
 function GlobalView:enc(n, delta)
   if n == 2 then
-    params:delta("filter_cutoff", delta)
+    params:delta("filter_cutoff", delta * 2)
     
   elseif n == 3 then
     -- TODO compress
@@ -447,11 +480,23 @@ end
 
 function GlobalView:redraw()
   
-  -- local scale = util.explin(specs.FILTER_FREQ.minval, specs.FILTER_FREQ.maxval, 0, 1, params:get("filter_cutoff")) --TODO
+  -- Draw filter
+  screen.level(2)
+  local filter_margin_v, filter_margin_h = 6, 4
+  local filter_num_lines = 7
+  for i = 1, util.explin(specs.FILTER_FREQ.minval, specs.FILTER_FREQ.maxval, filter_num_lines, 0, params:get("filter_cutoff")) do
+    screen.move(filter_margin_h * i + 0.5, filter_margin_v + 2 * i)
+    screen.line(filter_margin_h * i + 0.5, 64 - filter_margin_v - 2 * i)
+    screen.stroke()
+    if i > 0 then
+      screen.move(127 - filter_margin_h * i + 0.5, filter_margin_v + 2 * i)
+      screen.line(127 - filter_margin_h * i + 0.5, 64 - filter_margin_v - 2 * i)
+      screen.stroke()
+    end
+  end
   
   -- Draw drum kit
-
-  local cx, cy = 63, 29
+  local cx, cy = 62, 29
   
   local nod = 0
   local hair = 0
@@ -462,7 +507,7 @@ function GlobalView:redraw()
   end
   
   -- Hair outline
-  screen.level(3)
+  screen.level(6)
   screen.move(cx - 4.5 - hair, cy - 11)
   screen.line(cx - 4.5, cy - 16 + nod * 0.5)
   screen.arc(cx, cy - 16 + nod * 0.5, 4.5, math.pi, math.pi * 2)
@@ -496,13 +541,13 @@ function GlobalView:redraw()
   end
   
   -- SD
-  if self.timeouts.sd > 0 then screen.level(15) else screen.level(3) end
+  if self.timeouts.sd > 0 then screen.level(15) else screen.level(6) end
   screen.rect(cx + 10.5, cy + 0.5, 12, 5)
   screen.stroke()
   -- Stand
   screen.move(cx + 16.5, cy + 5.5)
   screen.line(cx + 16.5, cy + 14)
-  if self.timeouts.sd > 0 then screen.level(15) else screen.level(4) end
+  if self.timeouts.sd > 0 then screen.level(15) else screen.level(7) end
   screen.move(cx + 16.5, cy + 14)
   screen.line(cx + 20.5, cy + 19)
   screen.stroke()
@@ -511,11 +556,11 @@ function GlobalView:redraw()
   screen.stroke()
   
   -- HH
-  screen.level(3)
+  screen.level(6)
   if self.timeouts.ch > 0 or self.timeouts.oh > 0 then
     if self.timeouts.hc <= 0 then
       -- Arm
-      screen.level(4)
+      screen.level(7)
       screen.move(cx + 14, cy - 7.5)
       local hand_y = -9
       if self.timeouts.oh > 0 then hand_y = -10.5 end
@@ -539,7 +584,7 @@ function GlobalView:redraw()
   screen.move(cx + 25.5, cy - 3.5)
   screen.line(cx + 25.5, cy + 14)
   screen.stroke()
-  if self.timeouts.ch > 0 or self.timeouts.oh > 0 then screen.level(15) else screen.level(4) end
+  if self.timeouts.ch > 0 or self.timeouts.oh > 0 then screen.level(15) else screen.level(7) end
   screen.move(cx + 25.5, cy + 14)
   screen.line(cx + 29.5, cy + 19)
   screen.stroke()
@@ -548,7 +593,7 @@ function GlobalView:redraw()
   screen.stroke()
   
   -- LT
-  if self.timeouts.lt > 0 then screen.level(15) else screen.level(3) end
+  if self.timeouts.lt > 0 then screen.level(15) else screen.level(6) end
   screen.rect(cx - 19.5, cy + 2.5, 10, 13)
   screen.stroke()
   -- Feet
@@ -559,7 +604,7 @@ function GlobalView:redraw()
   screen.line(cx - 13.5, cy + 19)
   screen.stroke()
   -- Stripe
-  screen.level(1)
+  screen.level(2)
   screen.move(cx - 18, cy + 4.5)
   screen.line(cx - 11, cy + 4.5)
   screen.stroke()
@@ -568,29 +613,29 @@ function GlobalView:redraw()
   screen.stroke()
   
   -- MT
-  if self.timeouts.mt > 0 then screen.level(15) else screen.level(3) end
+  if self.timeouts.mt > 0 then screen.level(15) else screen.level(6) end
   screen.rect(cx - 12.5, cy - 7.5, 10, 7)
   screen.stroke()
-  screen.level(1)
+  screen.level(2)
   screen.move(cx - 11, cy - 5.5)
   screen.line(cx - 4, cy - 5.5)
   screen.stroke()
   
   -- HT
-  if self.timeouts.ht > 0 then screen.level(15) else screen.level(3) end
+  if self.timeouts.ht > 0 then screen.level(15) else screen.level(6) end
   screen.rect(cx + 2.5, cy - 7.5, 10, 6)
   screen.stroke()
-  screen.level(1)
+  screen.level(2)
   screen.move(cx + 11, cy - 5.5)
   screen.line(cx + 4, cy - 5.5)
   screen.stroke()
   
   -- CY
-  screen.level(3)
+  screen.level(6)
   if self.timeouts.cy > 0 then
     if self.timeouts.hc <= 0 then
       -- Arm
-      screen.level(4)
+      screen.level(7)
       screen.move(cx - 8, cy - 9.5)
       screen.line(cx - 17, cy - 16)
       screen.stroke()
@@ -604,8 +649,8 @@ function GlobalView:redraw()
   if self.timeouts.cy_shake > 0 then
     cym_rotation = cym_rotation + math.sin(self.timeouts.cy_shake * 40) * 0.7 * util.linlin(0, SHAKE_ANI_TIMEOUT, 0, 1, self.timeouts.cy_shake)
   end
-  local cos_cym_rotation = math.cos(cym_rotation) * 7
-  local sin_cym_rotation = math.sin(cym_rotation) * 7
+  local cos_cym_rotation = math.cos(cym_rotation) * 7.5
+  local sin_cym_rotation = math.sin(cym_rotation) * 7.5
   screen.move(cx - 23.5 - cos_cym_rotation, cy - 16.5 - sin_cym_rotation)
   screen.line(cx - 23.5 + cos_cym_rotation, cy - 16.5 + sin_cym_rotation)
   screen.stroke()
@@ -613,7 +658,7 @@ function GlobalView:redraw()
   screen.move(cx - 23.5, cy - 16.5)
   screen.line(cx - 23.5, cy + 14)
   screen.stroke()
-  if self.timeouts.cy > 0 then screen.level(15) else screen.level(4) end
+  if self.timeouts.cy > 0 then screen.level(15) else screen.level(7) end
   screen.move(cx - 23.5, cy + 14)
   screen.line(cx - 27.5, cy + 19)
   screen.stroke()
@@ -626,10 +671,10 @@ function GlobalView:redraw()
     screen.level(0)
     screen.rect(cx - 11, cy - 2, 22, 22)
     screen.fill()
-    if self.timeouts.bd > 0 then screen.level(15) else screen.level(5) end
+    if self.timeouts.bd > 0 then screen.level(15) else screen.level(6) end
     screen.rect(cx - 9.5, cy - 0.5, 19, 19)
     screen.stroke()
-    screen.level(1)
+    screen.level(2)
     screen.rect(cx + 0.5, cy + 9.5, 5, 5)
     screen.stroke()
   else
@@ -638,10 +683,10 @@ function GlobalView:redraw()
     screen.circle(cx, cy + 9, 13)
     screen.fill()
     screen.aa(1)
-    if self.timeouts.bd > 0 then screen.level(15) else screen.level(5) end
+    if self.timeouts.bd > 0 then screen.level(15) else screen.level(7) end
     screen.circle(cx, cy + 9, 10.5)
     screen.stroke()
-    screen.level(2)
+    screen.level(3)
     screen.circle(cx + 3, cy + 12, 2.5)
     screen.stroke()
   end
@@ -649,7 +694,7 @@ function GlobalView:redraw()
   -- CB
   if self.timeouts.cb > 0 then
     screen.level(15)
-    screen.move(cx + 27, cy - 13)
+    screen.move(cx + 21, cy - 15)
     screen.text("Donk!")
     screen.fill()
   end
@@ -667,10 +712,10 @@ SampleView.__index = SampleView
 
 function SampleView.new()
   
-  local tune_dial = UI.Dial.new(4.5, 19, 22, 0, -12, 12, 0.1, 0, {0}, "ST")
-  local decay_dial = UI.Dial.new(36, 32, 22, params:get("decay_" .. current_sample_id) * 100, 0, 100, 1, 0, nil, "%", "Decay")
-  local pan_dial = UI.Dial.new(67.5, 19, 22, params:get("pan_" .. current_sample_id) * 100, -100, 100, 1, 0, {0}, nil, "Pan")
-  local amp_dial = UI.Dial.new(99, 32, 22, params:get("amp_" .. current_sample_id), specs.AMP.minval, specs.AMP.maxval, 0.1, nil, {0}, "dB")
+  local tune_dial = UI.Dial.new(4.5, 18, 22, 0, -12, 12, 0.1, 0, {0}, "ST")
+  local decay_dial = UI.Dial.new(36, 31, 22, params:get("decay_" .. current_sample_id) * 100, 0, 100, 1, 0, nil, "%", "Decay")
+  local pan_dial = UI.Dial.new(67.5, 18, 22, params:get("pan_" .. current_sample_id) * 100, -100, 100, 1, 0, {0}, nil, "Pan")
+  local amp_dial = UI.Dial.new(99, 31, 22, params:get("amp_" .. current_sample_id), specs.AMP.minval, specs.AMP.maxval, 0.1, nil, {0}, "dB")
   
   pan_dial.active = false
   amp_dial.active = false
@@ -689,23 +734,25 @@ end
 
 function SampleView:enc(n, delta)
   
-  if n == 2 then
-    if self.tab_id == 1 then
-      params:delta("tune_" .. current_sample_id, delta)
-    else
-      params:delta("pan_" .. current_sample_id, delta)
+  if not samples_meta[current_sample_id].mute then
+    
+    if n == 2 then
+      if self.tab_id == 1 then
+        params:delta("tune_" .. current_sample_id, delta)
+      else
+        params:delta("pan_" .. current_sample_id, delta)
+      end
+      
+    elseif n == 3 then
+      if self.tab_id == 1 then
+        params:delta("decay_" .. current_sample_id, delta * 2)
+      else
+        params:delta("amp_" .. current_sample_id, delta)
+      end
+      
     end
-    
-  elseif n == 3 then
-    if self.tab_id == 1 then
-      params:delta("decay_" .. current_sample_id, delta * 2)
-    else
-      params:delta("amp_" .. current_sample_id, delta * 2)
-    end
-    
-    
+    screen_dirty = true
   end
-  screen_dirty = true
 end
 
 function SampleView:key(n, z)
@@ -718,7 +765,11 @@ function SampleView:key(n, z)
       self.amp_dial.active = self.tab_id == 2
       
     elseif n == 3 then
-      note_on(current_kit.samples[current_sample_id + 1].note, current_sample_id, 1)
+      if shift_mode then
+        note_on(current_kit.samples[current_sample_id + 1].note, current_sample_id, 1)
+      else
+        samples_meta[current_sample_id].mute = not samples_meta[current_sample_id].mute
+      end
       
     end
     screen_dirty = true
@@ -740,24 +791,44 @@ function SampleView:redraw()
   screen.level(15)
   screen.move(63, 9)
   screen.text_center(title)
-  
   screen.fill()
   
-  self.tune_dial:set_value(params:get("tune_" .. current_sample_id))
-  self.decay_dial:set_value(params:get("decay_" .. current_sample_id) * 100)
-  self.pan_dial:set_value(params:get("pan_" .. current_sample_id) * 100)
-  self.amp_dial:set_value(params:get("amp_" .. current_sample_id))
+  if samples_meta[current_sample_id].mute then
+    
+    screen.level(4)
+    screen.move(46, 19)
+    screen.line(82, 55)
+    screen.stroke()
+    screen.move(46, 55)
+    screen.line(82, 19)
+    screen.stroke()
+    
+  elseif samples_meta[current_sample_id].ready then
   
-  self.tune_dial:redraw()
-  self.decay_dial:redraw()
-  self.pan_dial:redraw()
-  self.amp_dial:redraw()
-  
-  if params:get("amp_" .. current_sample_id) > 2 then
-    screen.level(15)
-    screen.move(110, 46)
-    screen.text_center("!")
+    self.tune_dial:set_value(params:get("tune_" .. current_sample_id))
+    self.decay_dial:set_value(params:get("decay_" .. current_sample_id) * 100)
+    self.pan_dial:set_value(params:get("pan_" .. current_sample_id) * 100)
+    self.amp_dial:set_value(params:get("amp_" .. current_sample_id))
+    
+    self.tune_dial:redraw()
+    self.decay_dial:redraw()
+    self.pan_dial:redraw()
+    self.amp_dial:redraw()
+    
+    if params:get("amp_" .. current_sample_id) > 2 then
+      screen.level(15)
+      screen.move(110, 45)
+      screen.text_center("!")
+      screen.fill()
+    end
+    
+  else
+    
+    screen.level(3)
+    screen.move(63, 38)
+    screen.text_center(samples_meta[current_sample_id].error_status)
     screen.fill()
+    
   end
   
 end
@@ -785,7 +856,7 @@ function redraw()
     screen.text_center("No kits found in")
     screen.move(64, 41)
     screen.level(3)
-    screen.text_center("code/drummer/kits/")
+    screen.text_center("code/drum_room/kits/")
     screen.fill()
     screen.update()
     return
