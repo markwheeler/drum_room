@@ -106,17 +106,20 @@ local function add_global_params()
   end}
   
   params:add{type = "control", id = "compression", name = "Compression", controlspec = ControlSpec.UNIPOLAR, action = function(value)
-    -- if value == 0 then
-    --   audio.comp_off()
-    -- else
-    --   audio.comp_on()
-    -- end
-    -- audio.comp_mix(util.linlin(0, 0.25, 0, 1, value))
-    -- audio.comp_param("attack", util.linlin(0.5, 1, 1, 10, value))
-    -- audio.comp_param("threshold", util.linlin(0, 0.75, -0.0001, -48, value))
-    -- audio.comp_param("gain_post", util.linlin(0, 0.5, 0.0001, 24, value))
-    -- print("post gain", util.linlin(0, 0.5, 0.0001, 24, value), "thresh", util.linlin(0, 0.5, -0.0001, -48, value))
-    -- screen_dirty = true
+    if value == 0 then
+      audio.comp_off()
+    else
+      audio.comp_on()
+    end
+    audio.comp_mix(util.linlin(0, 0.25, 0, 1, value))
+    audio.comp_param("ratio", 8)
+    audio.comp_param("threshold", util.linlin(0, 0.66, 0, -32, value))
+    audio.comp_param("attack", util.linlin(0.66, 1, 0.0001, 0.02, value))
+    audio.comp_param("release", 0.05)
+    audio.comp_param("gain_pre", 0)
+    audio.comp_param("gain_post", util.linlin(0, 0.66, 0, 22, value) - util.linlin(0.66, 0.75, 0, 8, value))
+    
+    screen_dirty = true
   end}
   
   params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
@@ -440,12 +443,12 @@ local function update()
   --   note_on(current_kit.samples[4].note, 3, 1)
   -- end
   -- if count % 6 == 0 then
-  --   note_on(current_kit.samples[8].note, 7, 1)
+  --   note_on(current_kit.samples[6].note, 5, 1)
   -- end
-  -- if count % 32 == 0 then
-  --   note_on(current_kit.samples[10].note, 9, 1)
-  -- end
-  count = count + 1
+  -- -- if count % 32 == 0 then
+  -- --   note_on(current_kit.samples[10].note, 9, 1)
+  -- -- end
+  -- count = count + 1
 end
 
 
@@ -512,34 +515,45 @@ end
 
 function GlobalView:redraw()
   
-  -- Draw filter
-  screen.level(2)
-  local filter_margin_v, filter_margin_h = 6, 4
-  local filter_num_lines = 7
-  for i = 1, util.explin(specs.FILTER_FREQ.minval, specs.FILTER_FREQ.maxval, filter_num_lines, 0, params:get("filter_cutoff")) do
-    screen.move(filter_margin_h * i + 0.5, filter_margin_v + 2 * i)
-    screen.line(filter_margin_h * i + 0.5, 64 - filter_margin_v - 2 * i)
-    screen.stroke()
-    if i > 0 then
-      screen.move(127 - filter_margin_h * i + 0.5, filter_margin_v + 2 * i)
-      screen.line(127 - filter_margin_h * i + 0.5, 64 - filter_margin_v - 2 * i)
-      screen.stroke()
-    end
-  end
-  
-  -- Draw compressor
-  screen.level(15)
-  screen.move(0.5, 62)
-  screen.line(0.5, util.linlin(0, 1, 62, 2, params:get("compression")))
-  screen.stroke()
-  
   -- Title
   screen.level(15)
   screen.move(63, 60)
   screen.text_center(current_kit.name)
   screen.fill()
   
+  -- Draw walls
+  
+  screen.level(2)
+  local walls_margin_v, walls_margin_h = 8, 4
+  local walls_num_lines = 7
+  local filter_mod = util.explin(specs.FILTER_FREQ.minval, specs.FILTER_FREQ.maxval, 18, 6, params:get("filter_cutoff"))
+  for i = 1, walls_num_lines do
+    local wall_height_mod = 0
+    if math.ceil(params:get("compression") * walls_num_lines) == i then
+      wall_height_mod = 2
+      screen.level(6)
+    else
+      screen.level(2)
+    end
+    
+    local wall_top = walls_margin_v - wall_height_mod + util.linlin(1, walls_num_lines, 0, filter_mod, i)
+    local wall_bottom = 64 - walls_margin_v + wall_height_mod - util.linlin(1, walls_num_lines, 0, filter_mod, i)
+    -- Filter mod
+    screen.move(walls_margin_h * i + 0.5, wall_top)
+    screen.line(walls_margin_h * i + 0.5, wall_bottom)
+    screen.stroke()
+    screen.move(127 - walls_margin_h * i + 0.5, wall_top)
+    screen.line(127 - walls_margin_h * i + 0.5,  wall_bottom)
+    screen.stroke()
+  end
+  
   -- Draw drum kit
+
+  local drum_active = 15
+  local drum_outline = 6
+  local drum_outline_angled = drum_outline + 1
+  local drum_innner = 2
+  local drum_innner_angled = drum_innner + 1
   local cx, cy = 62, 29
   
   local nod = 0
@@ -551,7 +565,7 @@ function GlobalView:redraw()
   end
   
   -- Hair outline
-  screen.level(6)
+  screen.level(drum_outline)
   screen.move(cx - 4.5 - hair, cy - 11)
   screen.line(cx - 4.5, cy - 16 + nod * 0.5)
   screen.arc(cx, cy - 16 + nod * 0.5, 4.5, math.pi, math.pi * 2)
@@ -575,7 +589,7 @@ function GlobalView:redraw()
   
   -- HC
   if self.timeouts.hc > 0 then
-    screen.level(15)
+    screen.level(drum_active)
     screen.move(cx, cy - 10)
     screen.line(cx + 6, cy - 17)
     screen.stroke()
@@ -585,13 +599,13 @@ function GlobalView:redraw()
   end
   
   -- SD
-  if self.timeouts.sd > 0 then screen.level(15) else screen.level(6) end
+  if self.timeouts.sd > 0 then screen.level(drum_active) else screen.level(drum_outline) end
   screen.rect(cx + 10.5, cy + 0.5, 12, 5)
   screen.stroke()
   -- Stand
   screen.move(cx + 16.5, cy + 5.5)
   screen.line(cx + 16.5, cy + 14)
-  if self.timeouts.sd > 0 then screen.level(15) else screen.level(7) end
+  if self.timeouts.sd > 0 then screen.level(drum_active) else screen.level(drum_outline_angled) end
   screen.move(cx + 16.5, cy + 14)
   screen.line(cx + 20.5, cy + 19)
   screen.stroke()
@@ -600,18 +614,18 @@ function GlobalView:redraw()
   screen.stroke()
   
   -- HH
-  screen.level(6)
+  screen.level(drum_outline)
   if self.timeouts.ch > 0 or self.timeouts.oh > 0 then
     if self.timeouts.hc <= 0 then
       -- Arm
-      screen.level(7)
+      screen.level(drum_outline_angled)
       screen.move(cx + 14, cy - 7.5)
       local hand_y = -9
       if self.timeouts.oh > 0 then hand_y = -10.5 end
       screen.line(cx + 20.5, cy + hand_y)
       screen.stroke()
     end
-    screen.level(15)
+    screen.level(drum_active)
   end
   local mod_y_l, mod_y_r = 0, 0
   if self.timeouts.oh > 0 then
@@ -628,7 +642,7 @@ function GlobalView:redraw()
   screen.move(cx + 25.5, cy - 3.5)
   screen.line(cx + 25.5, cy + 14)
   screen.stroke()
-  if self.timeouts.ch > 0 or self.timeouts.oh > 0 then screen.level(15) else screen.level(7) end
+  if self.timeouts.ch > 0 or self.timeouts.oh > 0 then screen.level(drum_active) else screen.level(drum_outline_angled) end
   screen.move(cx + 25.5, cy + 14)
   screen.line(cx + 29.5, cy + 19)
   screen.stroke()
@@ -637,7 +651,7 @@ function GlobalView:redraw()
   screen.stroke()
   
   -- LT
-  if self.timeouts.lt > 0 then screen.level(15) else screen.level(6) end
+  if self.timeouts.lt > 0 then screen.level(drum_active) else screen.level(drum_outline) end
   screen.rect(cx - 19.5, cy + 2.5, 10, 13)
   screen.stroke()
   -- Feet
@@ -648,7 +662,7 @@ function GlobalView:redraw()
   screen.line(cx - 13.5, cy + 19)
   screen.stroke()
   -- Stripe
-  screen.level(2)
+  screen.level(drum_innner)
   screen.move(cx - 18, cy + 4.5)
   screen.line(cx - 11, cy + 4.5)
   screen.stroke()
@@ -657,34 +671,34 @@ function GlobalView:redraw()
   screen.stroke()
   
   -- MT
-  if self.timeouts.mt > 0 then screen.level(15) else screen.level(6) end
+  if self.timeouts.mt > 0 then screen.level(drum_active) else screen.level(drum_outline) end
   screen.rect(cx - 12.5, cy - 7.5, 10, 7)
   screen.stroke()
-  screen.level(2)
+  screen.level(drum_innner)
   screen.move(cx - 11, cy - 5.5)
   screen.line(cx - 4, cy - 5.5)
   screen.stroke()
   
   -- HT
-  if self.timeouts.ht > 0 then screen.level(15) else screen.level(6) end
+  if self.timeouts.ht > 0 then screen.level(drum_active) else screen.level(drum_outline) end
   screen.rect(cx + 2.5, cy - 7.5, 10, 6)
   screen.stroke()
-  screen.level(2)
+  screen.level(drum_innner)
   screen.move(cx + 11, cy - 5.5)
   screen.line(cx + 4, cy - 5.5)
   screen.stroke()
   
   -- CY
-  screen.level(6)
+  screen.level(drum_outline)
   if self.timeouts.cy > 0 then
     if self.timeouts.hc <= 0 then
       -- Arm
-      screen.level(7)
+      screen.level(drum_outline_angled)
       screen.move(cx - 8, cy - 9.5)
       screen.line(cx - 17, cy - 16)
       screen.stroke()
     end
-    screen.level(15)
+    screen.level(drum_active)
   end
   local cym_rotation = 0
   if params:get("quality") ~= 1 then
@@ -702,7 +716,7 @@ function GlobalView:redraw()
   screen.move(cx - 23.5, cy - 16.5)
   screen.line(cx - 23.5, cy + 14)
   screen.stroke()
-  if self.timeouts.cy > 0 then screen.level(15) else screen.level(7) end
+  if self.timeouts.cy > 0 then screen.level(drum_active) else screen.level(drum_outline_angled) end
   screen.move(cx - 23.5, cy + 14)
   screen.line(cx - 27.5, cy + 19)
   screen.stroke()
@@ -715,10 +729,10 @@ function GlobalView:redraw()
     screen.level(0)
     screen.rect(cx - 11, cy - 2, 22, 22)
     screen.fill()
-    if self.timeouts.bd > 0 then screen.level(15) else screen.level(6) end
+    if self.timeouts.bd > 0 then screen.level(drum_active) else screen.level(drum_outline) end
     screen.rect(cx - 9.5, cy - 0.5, 19, 19)
     screen.stroke()
-    screen.level(2)
+    screen.level(drum_innner)
     screen.rect(cx + 0.5, cy + 9.5, 5, 5)
     screen.stroke()
   else
@@ -727,17 +741,17 @@ function GlobalView:redraw()
     screen.circle(cx, cy + 9, 13)
     screen.fill()
     screen.aa(1)
-    if self.timeouts.bd > 0 then screen.level(15) else screen.level(7) end
+    if self.timeouts.bd > 0 then screen.level(drum_active) else screen.level(drum_outline_angled) end
     screen.circle(cx, cy + 9, 10.5)
     screen.stroke()
-    screen.level(3)
+    screen.level(drum_innner_angled)
     screen.circle(cx + 3, cy + 12, 2.5)
     screen.stroke()
   end
   
   -- CB
   if self.timeouts.cb > 0 then
-    screen.level(15)
+    screen.level(drum_active)
     screen.move(cx + 21, cy - 15)
     screen.text("Donk!")
     screen.fill()
@@ -749,22 +763,16 @@ end
 SampleView.__index = SampleView
 
 function SampleView.new()
-  
-  local tune_dial = UI.Dial.new(4.5, 18, 22, 0, -12, 12, 0.1, 0, {0}, "ST")
-  local decay_dial = UI.Dial.new(36, 31, 22, params:get("decay_" .. current_sample_id) * 100, 0, 100, 1, 0, nil, "%", "Decay")
-  local pan_dial = UI.Dial.new(67.5, 18, 22, params:get("pan_" .. current_sample_id) * 100, -100, 100, 1, 0, {0}, nil, "Pan")
-  local amp_dial = UI.Dial.new(99, 31, 22, params:get("amp_" .. current_sample_id), specs.AMP.minval, specs.AMP.maxval, 0.1, nil, {0}, "dB")
-  
-  pan_dial.active = false
-  amp_dial.active = false
-  
   local sample_view = {
     tab_id = 1,
-    tune_dial = tune_dial,
-    decay_dial = decay_dial,
-    pan_dial = pan_dial,
-    amp_dial = amp_dial
+    tune_dial = UI.Dial.new(4.5, 18, 22, 0, -12, 12, 0.1, 0, {0}, "ST"),
+    decay_dial = UI.Dial.new(36, 31, 22, params:get("decay_" .. current_sample_id) * 100, 0, 100, 1, 0, nil, "%", "Decay"),
+    pan_dial = UI.Dial.new(67.5, 18, 22, params:get("pan_" .. current_sample_id) * 100, -100, 100, 1, 0, {0}, nil, "Pan"),
+    amp_dial = UI.Dial.new(99, 31, 22, params:get("amp_" .. current_sample_id), specs.AMP.minval, specs.AMP.maxval, 0.1, nil, {0}, "dB")
   }
+  sample_view.pan_dial.active = false
+  sample_view.amp_dial.active = false
+  
   setmetatable(SampleView, {__index = SampleView})
   setmetatable(sample_view, SampleView)
   return sample_view
