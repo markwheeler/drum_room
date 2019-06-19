@@ -136,11 +136,11 @@ local function add_global_params()
 end
 
 local function load_kits()
-  local search_path = _path.code .. "drum_room/kits/"
+  local search_path = _path.code .. "drum_room/lib/"
   for _, v in ipairs(util.scandir(search_path)) do
     local kit_path = search_path .. v .. "kit.lua"
     if util.file_exists(kit_path) then
-      table.insert(kits, include("drum_room/kits/" .. v .. "kit"))
+      table.insert(kits, include("drum_room/lib/" .. v .. "kit"))
     end
   end
 end
@@ -752,7 +752,7 @@ function GlobalView:redraw()
   -- CB
   if self.timeouts.cb > 0 then
     screen.level(drum_active)
-    screen.move(cx + 21, cy - 15)
+    screen.move(cx + 21, cy - 18)
     screen.text("Donk!")
     screen.fill()
   end
@@ -902,7 +902,7 @@ function redraw()
     screen.text_center("No kits found in")
     screen.move(64, 41)
     screen.level(3)
-    screen.text_center("code/drum_room/kits/")
+    screen.text_center("code/drum_room/lib/")
     screen.fill()
     screen.update()
     return
