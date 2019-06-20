@@ -260,7 +260,7 @@ local function set_sample_id(id)
    current_sample_id = util.clamp(id, 0, NUM_SAMPLES - 1)
 end
 
-local function note_on(voice_id, sample_id, vel)
+local function note_on(voice_id, vel, sample_id)
   
   if samples_meta[sample_id].ready and not samples_meta[sample_id].mute then
     vel = vel or 1
@@ -271,8 +271,8 @@ local function note_on(voice_id, sample_id, vel)
       grouped_voice_id = 128 + current_kit.samples[sample_id + 1].group
     end
     
-    -- print("note_on", grouped_voice_id, sample_id, vel)
-    engine.noteOn(grouped_voice_id, sample_id, MusicUtil.note_num_to_freq(60), vel)
+    -- print("note_on", grouped_voice_id, vel, sample_id)
+    engine.noteOn(grouped_voice_id, MusicUtil.note_num_to_freq(60), vel, sample_id)
     
     if voice_id == 35 or voice_id == 36 then
       global_view.timeouts.bd = DRUM_ANI_TIMEOUT
@@ -409,7 +409,7 @@ local function midi_event(device_id, data)
         end
         
         if sample_id then
-          note_on(msg.note, sample_id, msg.vel / 127)
+          note_on(msg.note, msg.vel / 127, sample_id)
         end
       
       -- Pitch bend
@@ -437,16 +437,16 @@ local function update()
   --TODO test pattern
   -- if count % 8 == 0 then
   --   -- note_on(current_kit.samples[2].note, 1, 1)
-  --   note_on(current_kit.samples[1].note, 0, 1)
+  --   note_on(current_kit.samples[1].note, 1, 0)
   -- end
   -- if count % 16 == 0 then
-  --   note_on(current_kit.samples[4].note, 3, 1)
+  --   note_on(current_kit.samples[4].note, 1, 3)
   -- end
   -- if count % 6 == 0 then
-  --   note_on(current_kit.samples[6].note, 5, 1)
+  --   note_on(current_kit.samples[6].note, 1, 5)
   -- end
   -- -- if count % 32 == 0 then
-  -- --   note_on(current_kit.samples[10].note, 9, 1)
+  -- --   note_on(current_kit.samples[10].note, 1, 9)
   -- -- end
   -- count = count + 1
 end
@@ -812,7 +812,7 @@ function SampleView:key(n, z)
       
     elseif n == 3 then
       if shift_mode then
-        note_on(current_kit.samples[current_sample_id + 1].note, current_sample_id, 1)
+        note_on(current_kit.samples[current_sample_id + 1].note, 1, current_sample_id)
       else
         samples_meta[current_sample_id].mute = not samples_meta[current_sample_id].mute
       end
