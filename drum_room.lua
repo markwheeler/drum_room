@@ -54,8 +54,6 @@ local current_kit
 local current_sample_id = 0
 local clear_kit, set_kit, set_quality
 
-local count = 0 --TODO remove
-
 local samples_meta = {}
 for i = 0, NUM_SAMPLES - 1 do
   samples_meta[i] = {
@@ -414,9 +412,28 @@ local function midi_event(device_id, data)
       
       -- Pitch bend
       elseif msg.type == "pitchbend" then
+        
         local bend_st = (util.round(msg.val / 2)) / 8192 * 2 -1 -- Convert to -1 to 1
         local bend_range = params:get("bend_range")
         set_pitch_bend_all(bend_st * bend_range)
+        
+      -- CC
+      elseif msg.type == "cc" then
+        
+        for k, v in pairs(current_kit.samples) do
+          if v.tune == msg.cc then
+            params:set("tune_" .. k - 1, util.linlin(0, 127, specs.TUNE.minval, specs.TUNE.maxval, msg.val))
+          end
+          if v.decay == msg.cc then
+            params:set("decay_" .. k - 1, util.linlin(0, 127, specs.UNIPOLAR_DEFAULT_MAX.minval, specs.UNIPOLAR_DEFAULT_MAX.maxval, msg.val))
+          end
+          if v.pan == msg.cc then
+            params:set("pan_" .. k - 1, util.linlin(0, 127, ControlSpec.PAN.minval, ControlSpec.PAN.maxval, msg.val))
+          end
+          if v.amp == msg.cc then
+            params:set("amp_" .. k - 1, util.linlin(0, 127, specs.AMP.minval, specs.AMP.maxval, msg.val))
+          end
+        end
         
       end
     end
@@ -433,22 +450,6 @@ end
 
 local function update()
   global_view:update()
-  
-  --TODO test pattern
-  -- if count % 8 == 0 then
-  --   -- note_on(current_kit.samples[2].note, 1, 1)
-  --   note_on(current_kit.samples[1].note, 1, 0)
-  -- end
-  -- if count % 16 == 0 then
-  --   note_on(current_kit.samples[4].note, 1, 3)
-  -- end
-  -- if count % 6 == 0 then
-  --   note_on(current_kit.samples[6].note, 1, 5)
-  -- end
-  -- -- if count % 32 == 0 then
-  -- --   note_on(current_kit.samples[10].note, 1, 9)
-  -- -- end
-  -- count = count + 1
 end
 
 

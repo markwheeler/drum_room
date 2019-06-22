@@ -3,24 +3,44 @@ return {
   samples = {
     {
       note = 36,
-      file = "code/drum_room/kits/dmx/bass-drum.wav"
+      tune = 2,
+      decay = 3,
+      pan = 4,
+      amp = 5,
+      file = "code/drum_room/lib/dmx/bass-drum.wav"
     },
     {
       note = 38,
-      file = "code/drum_room/kits/dmx/snare.wav"
+      tune = 6,
+      decay = 7,
+      pan = 8,
+      amp = 9,
+      file = "code/drum_room/lib/dmx/snare.wav"
     },
     {
       note = 39,
-      file = "code/drum_room/kits/dmx/clap.wav"
+      tune = 10,
+      decay = 11,
+      pan = 12,
+      amp = 13,
+      file = "code/drum_room/lib/dmx/clap.wav"
     },
     {
       note = 42,
-      file = "code/drum_room/kits/dmx/closed-hat.wav",
+      tune = 14,
+      decay = 15,
+      pan = 16,
+      amp = 17,
+      file = "code/drum_room/lib/dmx/closed-hat.wav",
       group = 1
     },
     {
       note = 46,
-      file = "code/drum_room/kits/dmx/open-hat.wav",
+      tune = 18,
+      decay = 19,
+      pan = 20,
+      amp = 21,
+      file = "code/drum_room/lib/dmx/open-hat.wav",
       group = 1
     }
   }
