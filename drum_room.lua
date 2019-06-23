@@ -2,7 +2,7 @@
 -- 1.0.0 @markeats
 -- llllllll.co/t/drum-room
 --
--- MIDI-triggered drum kits.
+-- MIDI-controlled drum kits.
 --
 -- E1 : Page
 --
