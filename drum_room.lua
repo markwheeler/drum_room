@@ -274,38 +274,46 @@ end
 -- Encoder input
 function enc(n, delta)
   
-  -- Global
-  if n == 1 then
-    pages:set_index_delta(delta, false)
-    if pages.index > 1 then
-      set_sample_id(pages.index - 2)
-    end
+  if pages then
   
-  else
+    -- Global
+    if n == 1 then
+      pages:set_index_delta(delta, false)
+      if pages.index > 1 then
+        set_sample_id(pages.index - 2)
+      end
     
-    if pages.index == 1 then
-      global_view:enc(n, delta)
     else
-      sample_view:enc(n, delta)
+      
+      if pages.index == 1 then
+        global_view:enc(n, delta)
+      else
+        sample_view:enc(n, delta)
+      end
+      
     end
+    screen_dirty = true
     
   end
-  screen_dirty = true
 end
 
 -- Key input
 function key(n, z)
   
-  if n == 1 then
-    shift_mode = z == 1
+  if pages then
     
-  else
-    if pages.index == 1 then
-      global_view:key(n, z)
+    if n == 1 then
+      shift_mode = z == 1
+      
     else
-      sample_view:key(n, z)
+      if pages.index == 1 then
+        global_view:key(n, z)
+      else
+        sample_view:key(n, z)
+      end
+      screen_dirty = true
     end
-    screen_dirty = true
+    
   end
   
 end
