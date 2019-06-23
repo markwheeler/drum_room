@@ -2,8 +2,8 @@ return {
   name = "TR-606",
   samples = {
     {
-      note = 36,
-      tune = 2,
+      note = 36, -- MIDI note to trigger sample
+      tune = 2, -- MIDI CC to control tune param
       decay = 3,
       pan = 4,
       amp = 5,

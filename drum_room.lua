@@ -76,63 +76,6 @@ local options = {}
 options.OFF_ON = {"Off", "On"}
 options.QUALITY = {"Low", "High"}
 
-local function add_global_params()
-  
-  local kit_names = {}
-  for _, v in ipairs(kits) do table.insert(kit_names, v.name) end
-  params:add{type = "option", id = "kit", name = "Kit", options = kit_names, default = 1, action = function(value)
-    clear_kit()
-    set_kit(value)
-  end}
-  
-  params:add{type = "number", id = "midi_in_device", name = "MIDI In Device", min = 1, max = 4, default = 1, action = reconnect_midi_ins}
-  local channels = {"All"}
-  for i = 1, 16 do table.insert(channels, i) end
-  params:add{type = "option", id = "midi_in_channel", name = "MIDI In Channel", options = channels}
-  
-  params:add{type = "number", id = "bend_range", name = "Pitch Bend Range", min = 1, max = 48, default = 2}
-  
-  params:add{type = "option", id = "follow", name = "Follow", options = options.OFF_ON, default = 1}
-  
-  params:add_separator()
-  
-  params:add{type = "control", id = "filter_cutoff", name = "Filter Cutoff", controlspec = specs.FILTER_FREQ, formatter = Formatters.format_freq, action = function(value)
-    for k, v in ipairs(current_kit.samples) do
-      engine.filterFreq(k - 1, value)
-    end
-    screen_dirty = true
-  end}
-  
-  params:add{type = "control", id = "compression", name = "Compression", controlspec = ControlSpec.UNIPOLAR, action = function(value)
-    if value == 0 then
-      audio.comp_off()
-    else
-      audio.comp_on()
-    end
-    audio.comp_mix(util.linlin(0, 0.25, 0, 1, value))
-    audio.comp_param("ratio", 8)
-    audio.comp_param("threshold", util.linlin(0, 0.66, 0, -32, value))
-    audio.comp_param("attack", util.linlin(0.66, 1, 0.0001, 0.02, value))
-    audio.comp_param("release", 0.05)
-    audio.comp_param("gain_pre", 0)
-    audio.comp_param("gain_post", util.linlin(0, 0.66, 0, 22, value) - util.linlin(0.66, 0.75, 0, 8, value))
-    
-    screen_dirty = true
-  end}
-  
-  params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
-    for k, v in ipairs(current_kit.samples) do
-      set_quality(k - 1, value)
-    end
-    screen_dirty = true
-  end}
-  
-  params:add_separator()
-  
-  num_global_params = params.count
-  
-end
-
 local function load_kits()
   local search_path = _path.code .. "drum_room/lib/"
   for _, v in ipairs(util.scandir(search_path)) do
@@ -386,65 +329,57 @@ local function osc_event(path, args, from)
 end
 
 -- MIDI input
-local function midi_event(device_id, data)
+local function midi_event(data)
   
   local msg = midi.to_msg(data)
   local channel_param = params:get("midi_in_channel")
   
   -- MIDI In
-  if device_id == params:get("midi_in_device") then
-    if channel_param == 1 or (channel_param > 1 and msg.ch == channel_param - 1) then
+  if channel_param == 1 or (channel_param > 1 and msg.ch == channel_param - 1) then
+    
+    -- Note on
+    if msg.type == "note_on" then
       
-      -- Note on
-      if msg.type == "note_on" then
-        
-        local sample_id
-        for k, v in ipairs(current_kit.samples) do
-          if v.note == msg.note then
-            sample_id = k - 1
-            break
-          end
+      local sample_id
+      for k, v in ipairs(current_kit.samples) do
+        if v.note == msg.note then
+          sample_id = k - 1
+          break
         end
-        
-        if sample_id then
-          note_on(msg.note, msg.vel / 127, sample_id)
-        end
-      
-      -- Pitch bend
-      elseif msg.type == "pitchbend" then
-        
-        local bend_st = (util.round(msg.val / 2)) / 8192 * 2 -1 -- Convert to -1 to 1
-        local bend_range = params:get("bend_range")
-        set_pitch_bend_all(bend_st * bend_range)
-        
-      -- CC
-      elseif msg.type == "cc" then
-        
-        for k, v in pairs(current_kit.samples) do
-          if v.tune == msg.cc then
-            params:set("tune_" .. k - 1, util.linlin(0, 127, specs.TUNE.minval, specs.TUNE.maxval, msg.val))
-          end
-          if v.decay == msg.cc then
-            params:set("decay_" .. k - 1, util.linlin(0, 127, specs.UNIPOLAR_DEFAULT_MAX.minval, specs.UNIPOLAR_DEFAULT_MAX.maxval, msg.val))
-          end
-          if v.pan == msg.cc then
-            params:set("pan_" .. k - 1, util.linlin(0, 127, ControlSpec.PAN.minval, ControlSpec.PAN.maxval, msg.val))
-          end
-          if v.amp == msg.cc then
-            params:set("amp_" .. k - 1, util.linlin(0, 127, specs.AMP.minval, specs.AMP.maxval, msg.val))
-          end
-        end
-        
       end
+      
+      if sample_id then
+        note_on(msg.note, msg.vel / 127, sample_id)
+      end
+    
+    -- Pitch bend
+    elseif msg.type == "pitchbend" then
+      
+      local bend_st = (util.round(msg.val / 2)) / 8192 * 2 -1 -- Convert to -1 to 1
+      local bend_range = params:get("bend_range")
+      set_pitch_bend_all(bend_st * bend_range)
+      
+    -- CC
+    elseif msg.type == "cc" then
+      
+      for k, v in pairs(current_kit.samples) do
+        if v.tune == msg.cc then
+          params:set("tune_" .. k - 1, util.linlin(0, 127, specs.TUNE.minval, specs.TUNE.maxval, msg.val))
+        end
+        if v.decay == msg.cc then
+          params:set("decay_" .. k - 1, util.linlin(0, 127, specs.UNIPOLAR_DEFAULT_MAX.minval, specs.UNIPOLAR_DEFAULT_MAX.maxval, msg.val))
+        end
+        if v.pan == msg.cc then
+          params:set("pan_" .. k - 1, util.linlin(0, 127, ControlSpec.PAN.minval, ControlSpec.PAN.maxval, msg.val))
+        end
+        if v.amp == msg.cc then
+          params:set("amp_" .. k - 1, util.linlin(0, 127, specs.AMP.minval, specs.AMP.maxval, msg.val))
+        end
+      end
+      
     end
   end
   
-end
-
-local function reconnect_midi_ins()
-  midi_in_device.event = nil
-  midi_in_device = midi.connect(params:get("midi_in_device"))
-  midi_in_device.event = function(data) midi_event(params:get("midi_in_device"), data) end
 end
 
 
@@ -921,12 +856,75 @@ function redraw()
 end
 
 
+local function add_global_params()
+  
+  local kit_names = {}
+  for _, v in ipairs(kits) do table.insert(kit_names, v.name) end
+  params:add{type = "option", id = "kit", name = "Kit", options = kit_names, default = 1, action = function(value)
+    clear_kit()
+    set_kit(value)
+  end}
+  
+  params:add{type = "number", id = "midi_in_device", name = "MIDI In Device", min = 1, max = 4, default = 1, action = function(value)
+    midi_in_device.event = nil
+    midi_in_device = midi.connect(value)
+    midi_in_device.event = midi_event
+  end}
+  
+  local channels = {"All"}
+  for i = 1, 16 do table.insert(channels, i) end
+  params:add{type = "option", id = "midi_in_channel", name = "MIDI In Channel", options = channels}
+  
+  params:add{type = "number", id = "bend_range", name = "Pitch Bend Range", min = 1, max = 48, default = 2}
+  
+  params:add{type = "option", id = "follow", name = "Follow", options = options.OFF_ON, default = 1}
+  
+  params:add_separator()
+  
+  params:add{type = "control", id = "filter_cutoff", name = "Filter Cutoff", controlspec = specs.FILTER_FREQ, formatter = Formatters.format_freq, action = function(value)
+    for k, v in ipairs(current_kit.samples) do
+      engine.filterFreq(k - 1, value)
+    end
+    screen_dirty = true
+  end}
+  
+  params:add{type = "control", id = "compression", name = "Compression", controlspec = ControlSpec.UNIPOLAR, action = function(value)
+    if value == 0 then
+      audio.comp_off()
+    else
+      audio.comp_on()
+    end
+    audio.comp_mix(util.linlin(0, 0.25, 0, 1, value))
+    audio.comp_param("ratio", 8)
+    audio.comp_param("threshold", util.linlin(0, 0.66, 0, -32, value))
+    audio.comp_param("attack", util.linlin(0.66, 1, 0.00001, 0.02, value))
+    audio.comp_param("release", 0.05)
+    audio.comp_param("gain_pre", 0)
+    audio.comp_param("gain_post", util.linlin(0, 0.66, 0, 22, value) - util.linlin(0.66, 0.75, 0, 8, value))
+    
+    screen_dirty = true
+  end}
+  
+  params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
+    for k, v in ipairs(current_kit.samples) do
+      set_quality(k - 1, value)
+    end
+    screen_dirty = true
+  end}
+  
+  params:add_separator()
+  
+  num_global_params = params.count
+  
+end
+
+
 function init()
   
   osc.event = osc_event
   
   midi_in_device = midi.connect(1)
-  midi_in_device.event = function(data) midi_event(1, data) end
+  midi_in_device.event = midi_event
   
   -- UI
   global_view = GlobalView.new()
