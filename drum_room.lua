@@ -1,5 +1,5 @@
 -- Drum Room
--- 1.0.0 @markeats
+-- 1.0.1 @markeats
 -- llllllll.co/t/drum-room
 --
 -- MIDI-controlled drum kits.
@@ -69,7 +69,7 @@ local kits = {}
 local specs = {}
 specs.UNIPOLAR_DEFAULT_MAX = ControlSpec.new(0, 1, "lin", 0, 1, "")
 specs.FILTER_FREQ = ControlSpec.new(60, 20000, "exp", 0, 20000, "Hz")
-specs.TUNE = ControlSpec.new(-12, 12, "lin", 0.5, 0, "ST")
+specs.TUNE = ControlSpec.new(-12, 12, "lin", 0.2, 0, "ST")
 specs.AMP = ControlSpec.new(-48, 32, "db", 0, 0, "dB")
 
 local options = {}
@@ -108,7 +108,7 @@ function set_kit(id)
         -- Add params
         
         params:add{type = "control", id = "tune_" .. sample_id, name = name_prefix .. " Tune", controlspec = specs.TUNE, formatter = Formatters.round(0.1), action = function(value)
-          engine.originalFreq(sample_id, MusicUtil.note_num_to_freq(60 - value))
+          engine.transpose(sample_id, value)
           screen_dirty = true
         end}
         
