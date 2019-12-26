@@ -1,5 +1,5 @@
 -- Drum Room
--- 1.0.1 @markeats
+-- 1.1.0 @markeats
 -- llllllll.co/t/drum-room
 --
 -- MIDI-controlled drum kits.
@@ -42,11 +42,13 @@ local DRUM_ANI_TIMEOUT = 0.2
 local SHAKE_ANI_TIMEOUT = 0.4
 
 local GlobalView = {}
+local EffectsView = {}
 local SampleView = {}
 
 local num_global_params
 local pages
 local global_view
+local effects_view
 local sample_view
 local shift_mode = false
 
@@ -71,10 +73,17 @@ specs.UNIPOLAR_DEFAULT_MAX = ControlSpec.new(0, 1, "lin", 0, 1, "")
 specs.FILTER_FREQ = ControlSpec.new(60, 20000, "exp", 0, 20000, "Hz")
 specs.TUNE = ControlSpec.new(-12, 12, "lin", 0.2, 0, "ST")
 specs.AMP = ControlSpec.new(-48, 32, "db", 0, 0, "dB")
+specs.DRIVE = ControlSpec.new(0, 32, "db", 0, 0, "dB")
 
 local options = {}
 options.OFF_ON = {"Off", "On"}
 options.QUALITY = {"Low", "High"}
+
+local function set_decay(sample_id, decay, length)
+  local actual_decay = decay * length
+  engine.ampDecay(sample_id, util.linlin(0, 0.9, 0.01, math.min(5, samples_meta[sample_id].length), actual_decay))
+  engine.ampSustain(sample_id, util.linlin(0.9, 1, 0, 1, actual_decay))
+end
 
 local function load_kits()
   local search_path = _path.code .. "drum_room/lib/"
@@ -113,8 +122,7 @@ function set_kit(id)
         end}
         
         params:add{type = "control", id = "decay_" .. sample_id, name = name_prefix .. " Decay", controlspec = specs.UNIPOLAR_DEFAULT_MAX, formatter = Formatters.unipolar_as_percentage, action = function(value)
-          engine.ampDecay(sample_id, util.linlin(0, 0.9, 0.01, math.min(5, samples_meta[sample_id].length), value))
-          engine.ampSustain(sample_id, util.linlin(0.9, 1, 0, 1, value))
+          set_decay(sample_id, value, params:get("length"))
           screen_dirty = true
         end}
         
@@ -124,7 +132,7 @@ function set_kit(id)
         end}
         
         params:add{type = "control", id = "amp_" .. sample_id, name = name_prefix .. " Amp", controlspec = specs.AMP, action = function(value)
-          engine.amp(sample_id, value)
+          engine.amp(sample_id, value + params:get("drive"))
           screen_dirty = true
         end}
         
@@ -134,7 +142,7 @@ function set_kit(id)
       
       current_kit = kits[id]
       sample_view = SampleView.new()
-      pages = UI.Pages.new(1, math.min(#current_kit.samples, NUM_SAMPLES) + 1)
+      pages = UI.Pages.new(1, math.min(#current_kit.samples, NUM_SAMPLES) + 2)
       screen_dirty = true
       
     end
@@ -238,8 +246,8 @@ local function note_on(voice_id, vel, sample_id)
       global_view.timeouts.cb = DRUM_ANI_TIMEOUT
     end
     
-    if params:get("follow") > 1 and pages.index > 1 then
-      pages:set_index(sample_id + 2)
+    if params:get("follow") > 1 and pages.index > 2 then
+      pages:set_index(sample_id + 3)
       set_sample_id(sample_id)
     end
     
@@ -279,14 +287,16 @@ function enc(n, delta)
     -- Global
     if n == 1 then
       pages:set_index_delta(delta, false)
-      if pages.index > 1 then
-        set_sample_id(pages.index - 2)
+      if pages.index > 2 then
+        set_sample_id(pages.index - 3)
       end
     
     else
       
       if pages.index == 1 then
         global_view:enc(n, delta)
+      elseif pages.index == 2 then
+        effects_view:enc(n, delta)
       else
         sample_view:enc(n, delta)
       end
@@ -308,6 +318,8 @@ function key(n, z)
     else
       if pages.index == 1 then
         global_view:key(n, z)
+      elseif pages.index == 2 then
+        effects_view:key(n, z)
       else
         sample_view:key(n, z)
       end
@@ -426,7 +438,7 @@ function GlobalView:enc(n, delta)
     params:delta("filter_cutoff", delta * 2)
     
   elseif n == 3 then
-    params:delta("compression", delta * 2)
+    params:delta("length", delta * 2)
     
   end
   screen_dirty = true
@@ -473,7 +485,7 @@ function GlobalView:redraw()
   local filter_mod = util.explin(specs.FILTER_FREQ.minval, specs.FILTER_FREQ.maxval, 18, 6, params:get("filter_cutoff"))
   for i = 1, walls_num_lines do
     local wall_height_mod = 0
-    if math.ceil(params:get("compression") * walls_num_lines) == i then
+    if math.ceil((1 - params:get("length")) * walls_num_lines) == i then
       wall_height_mod = 2
       screen.level(6)
     else
@@ -704,6 +716,60 @@ function GlobalView:redraw()
 end
 
 
+EffectsView.__index = EffectsView
+
+function EffectsView.new()
+  local effects = {
+    drive_dial = UI.Dial.new(30, 23, 22, params:get("drive"), 0, specs.AMP.maxval, 0.1, 0, nil, nil, "Drive"),
+    comp_dial = UI.Dial.new(74, 23, 22, params:get("compression") * 100, 0, 100, 1, 0, nil, nil, "Comp")
+  }
+  setmetatable(EffectsView, {__index = EffectsView})
+  setmetatable(effects, EffectsView)
+  return effects
+end
+
+function EffectsView:enc(n, delta)
+  if n == 2 then
+    params:delta("drive", delta)
+    
+  elseif n == 3 then
+    params:delta("compression", delta * 2)
+    
+  end
+  screen_dirty = true
+end
+
+function EffectsView:key(n, z)
+  if z == 1 then
+    if n == 2 then
+      
+    elseif n == 3 then
+      
+    end
+    screen_dirty = true
+  end
+end
+
+function EffectsView:update()
+  screen_dirty = true
+end
+
+function EffectsView:redraw()
+  
+  screen.level(15)
+  screen.move(63, 9)
+  screen.text_center("Global FX")
+  screen.fill()
+  
+  self.drive_dial:set_value(params:get("drive"))
+  self.comp_dial:set_value(params:get("compression") * 100)
+  
+  self.comp_dial:redraw()
+  self.drive_dial:redraw()
+    
+end
+
+
 SampleView.__index = SampleView
 
 function SampleView.new()
@@ -856,6 +922,8 @@ function redraw()
   
   if pages.index == 1 then
     global_view:redraw()
+  elseif pages.index == 2 then
+    effects_view:redraw()
   else
     sample_view:redraw()
   end
@@ -889,9 +957,30 @@ local function add_global_params()
   
   params:add_separator()
   
+  params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
+    for k, v in ipairs(current_kit.samples) do
+      set_quality(k - 1, value)
+    end
+    screen_dirty = true
+  end}
+  
+  params:add{type = "control", id = "length", name = "Length", controlspec = specs.UNIPOLAR_DEFAULT_MAX, formatter = Formatters.unipolar_as_percentage, action = function(value)
+    for k, _ in pairs(current_kit.samples) do
+      set_decay(k - 1, params:get("decay_" .. k - 1), value)
+    end
+    screen_dirty = true
+  end}
+  
   params:add{type = "control", id = "filter_cutoff", name = "Filter Cutoff", controlspec = specs.FILTER_FREQ, formatter = Formatters.format_freq, action = function(value)
     for k, v in ipairs(current_kit.samples) do
       engine.filterFreq(k - 1, value)
+    end
+    screen_dirty = true
+  end}
+  
+  params:add{type = "control", id = "drive", name = "Drive", controlspec = specs.DRIVE, action = function(value)
+    for k, _ in pairs(current_kit.samples) do
+      engine.amp(k - 1, params:get("amp_" .. k - 1) + value)
     end
     screen_dirty = true
   end}
@@ -913,13 +1002,6 @@ local function add_global_params()
     screen_dirty = true
   end}
   
-  params:add{type = "option", id = "quality", name = "Quality", options = options.QUALITY, default = 2, action = function(value)
-    for k, v in ipairs(current_kit.samples) do
-      set_quality(k - 1, value)
-    end
-    screen_dirty = true
-  end}
-  
   params:add_separator()
   
   num_global_params = params.count
@@ -934,8 +1016,12 @@ function init()
   midi_in_device = midi.connect(1)
   midi_in_device.event = midi_event
   
+  load_kits()
+  add_global_params()
+  
   -- UI
   global_view = GlobalView.new()
+  effects_view = EffectsView.new()
   
   screen.aa(1)
   
@@ -952,8 +1038,6 @@ function init()
   
   engine.generateWaveforms(0)
   
-  load_kits()
-  add_global_params()
   set_kit(1)
   
 end
