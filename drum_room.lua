@@ -9,7 +9,11 @@
 -- ROOM:
 --  K2 : Kit
 --  K3 : Quality
---  E2 : Filter
+--  E2 : Length
+--  E3 : Filter
+--
+-- GLOBAL FX:
+--  E2 : Drive
 --  E3 : Compression
 --
 -- SAMPLES:
@@ -79,10 +83,25 @@ local options = {}
 options.OFF_ON = {"Off", "On"}
 options.QUALITY = {"Low", "High"}
 
+local function set_quality(sample_id, quality)
+  local downSampleTo = 48000
+  local bitDepth = 24
+  if quality == 1 then
+    downSampleTo = 16000
+    bitDepth = 8
+  end
+  engine.downSampleTo(sample_id, downSampleTo)
+  engine.bitDepth(sample_id, bitDepth)
+end
+
 local function set_decay(sample_id, decay, length)
   local actual_decay = decay * length
   engine.ampDecay(sample_id, util.linlin(0, 0.9, 0.01, math.min(5, samples_meta[sample_id].length), actual_decay))
   engine.ampSustain(sample_id, util.linlin(0.9, 1, 0, 1, actual_decay))
+end
+
+local function set_amp(sample_id, amp, drive)
+  engine.amp(sample_id, amp + drive)
 end
 
 local function load_kits()
@@ -132,7 +151,7 @@ function set_kit(id)
         end}
         
         params:add{type = "control", id = "amp_" .. sample_id, name = name_prefix .. " Amp", controlspec = specs.AMP, action = function(value)
-          engine.amp(sample_id, value + params:get("drive"))
+          set_amp(sample_id, value, params:get("drive"))
           screen_dirty = true
         end}
         
@@ -180,6 +199,8 @@ local function sample_loaded(id, streaming, num_frames, num_channels, sample_rat
   engine.filterReso(id, 0.15)
   engine.filterFreq(id, params:get("filter_cutoff"))
   set_quality(id, params:get("quality"))
+  set_decay(id, params:get("decay_" .. id), params:get("length"))
+  set_amp(id, params:get("amp_" .. id), params:get("drive"))
   
   screen_dirty = true
 end
@@ -265,17 +286,6 @@ end
 
 local function set_pitch_bend_all(bend_st)
   engine.pitchBendAll(MusicUtil.interval_to_ratio(bend_st))
-end
-
-function set_quality(sample_id, quality)
-  local downSampleTo = 48000
-  local bitDepth = 24
-  if quality == 1 then
-    downSampleTo = 16000
-    bitDepth = 8
-  end
-  engine.downSampleTo(sample_id, downSampleTo)
-  engine.bitDepth(sample_id, bitDepth)
 end
 
 
@@ -435,10 +445,10 @@ end
 
 function GlobalView:enc(n, delta)
   if n == 2 then
-    params:delta("filter_cutoff", delta * 2)
+    params:delta("length", delta * 1.5)
     
   elseif n == 3 then
-    params:delta("length", delta * 2)
+    params:delta("filter_cutoff", delta * 2)
     
   end
   screen_dirty = true
@@ -980,7 +990,7 @@ local function add_global_params()
   
   params:add{type = "control", id = "drive", name = "Drive", controlspec = specs.DRIVE, action = function(value)
     for k, _ in pairs(current_kit.samples) do
-      engine.amp(k - 1, params:get("amp_" .. k - 1) + value)
+      set_amp(k - 1, params:get("amp_" .. k - 1), value)
     end
     screen_dirty = true
   end}
