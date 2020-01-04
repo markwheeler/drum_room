@@ -60,6 +60,8 @@ local current_kit
 local current_sample_id = 0
 local clear_kit, set_kit, set_quality
 
+local sequence_metro
+
 local samples_meta = {}
 for i = 0, NUM_SAMPLES - 1 do
   samples_meta[i] = {
@@ -458,7 +460,14 @@ function GlobalView:key(n, z)
   if z == 1 then
     if n == 2 then
       
-      if #kits > 0 then
+      if shift_mode then
+        if sequence_metro.is_running then
+          sequence_metro:stop()
+        else
+          sequence_metro:start(0.25)
+        end
+        
+      elseif #kits > 0 then
         params:set("kit", params:get("kit") % #kits + 1)
       end
       
@@ -1049,5 +1058,19 @@ function init()
   engine.generateWaveforms(0)
   
   set_kit(1)
+  
+  -- Demo sequence
+  sequence_metro = metro.init()
+  local sequence_count = 1
+  sequence_metro.event = function()
+    if sequence_count % 4 == 0 then
+      note_on(36, 0.75, 0)
+    elseif sequence_count % 2 == 0 then
+      note_on(38, 0.75, 2)
+    else
+      note_on(42, 0.75, 3)
+    end
+    sequence_count = sequence_count + 1
+  end
   
 end
