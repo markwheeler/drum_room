@@ -859,9 +859,7 @@ function SampleView:redraw()
   
   local title = current_kit.samples[current_sample_id + 1].file
   title = string.sub(title, string.find(title, "/[^/]*$") + 1, string.find(title, ".[^.]*$") - 1)
-  if string.len(title) > 19 then
-    title = string.sub(title, 1, 16) .. "..."
-  end
+  title = util.trim_string_to_width(title, 80)
   
   screen.level(15)
   screen.move(63, 9)
