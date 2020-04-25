@@ -1,5 +1,5 @@
 -- Drum Room
--- 1.1.0 @markeats
+-- 1.1.1 @markeats
 -- llllllll.co/t/drum-room
 --
 -- MIDI-controlled drum kits.
@@ -1052,8 +1052,6 @@ function init()
   end
   
   screen_redraw_metro:start(1 / SCREEN_FRAMERATE)
-  
-  engine.generateWaveforms(0)
   
   set_kit(1)
   
