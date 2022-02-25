@@ -1,5 +1,5 @@
 -- Drum Room
--- 1.1.1 @markeats
+-- 1.1.2 @markeats
 -- llllllll.co/t/drum-room
 --
 -- MIDI-controlled drum kits.
@@ -49,7 +49,6 @@ local GlobalView = {}
 local EffectsView = {}
 local SampleView = {}
 
-local num_global_params
 local pages
 local global_view
 local effects_view
@@ -132,32 +131,11 @@ function set_kit(id)
           engine.loadSample(sample_id, _path.dust .. v.file)
         end
         
-        local file = string.sub(v.file, string.find(v.file, "/[^/]*$") + 1, string.find(v.file, ".[^.]*$") - 1)
-        local name_prefix = string.sub(file, 1, 7)
-        
-        -- Add params
-        
-        params:add{type = "control", id = "tune_" .. sample_id, name = name_prefix .. " Tune", controlspec = specs.TUNE, formatter = Formatters.round(0.1), action = function(value)
-          engine.transpose(sample_id, value)
-          screen_dirty = true
-        end}
-        
-        params:add{type = "control", id = "decay_" .. sample_id, name = name_prefix .. " Decay", controlspec = specs.UNIPOLAR_DEFAULT_MAX, formatter = Formatters.unipolar_as_percentage, action = function(value)
-          set_decay(sample_id, value, params:get("length"))
-          screen_dirty = true
-        end}
-        
-        params:add{type = "control", id = "pan_" .. sample_id, name = name_prefix .. " Pan", controlspec = ControlSpec.PAN, formatter = Formatters.bipolar_as_pan_widget, action = function(value)
-          engine.pan(sample_id, value)
-          screen_dirty = true
-        end}
-        
-        params:add{type = "control", id = "amp_" .. sample_id, name = name_prefix .. " Amp", controlspec = specs.AMP, action = function(value)
-          set_amp(sample_id, value, params:get("drive"))
-          screen_dirty = true
-        end}
-        
-        params:add_separator()
+        -- Show kit sample params
+        params:show(id .. "_tune_" .. sample_id)
+        params:show(id .. "_decay_" .. sample_id)
+        params:show(id .. "_pan_" .. sample_id)
+        params:show(id .. "_amp_" .. sample_id)
         
       end
       
@@ -181,10 +159,20 @@ function clear_kit()
     samples_meta[i].mute = false
   end
   
-  -- Remove previous kit params
-  for i = #params.params, num_global_params + 1, -1 do
-    table.remove(params.params, i)
-    params.count = params.count - 1
+  -- Hide all kit params
+  for i = 1, #kits do
+    for k, v in ipairs(kits[i].samples) do
+      
+      if k > NUM_SAMPLES then break end
+      
+      local sample_id = k - 1
+      
+      params:hide(i .. "_tune_" .. sample_id)
+      params:hide(i .. "_decay_" .. sample_id)
+      params:hide(i .. "_pan_" .. sample_id)
+      params:hide(i .. "_amp_" .. sample_id)
+      params:hide(i .. "_amp_" .. sample_id)
+    end
   end
   
   screen_dirty = true
@@ -201,8 +189,8 @@ local function sample_loaded(id, streaming, num_frames, num_channels, sample_rat
   engine.filterReso(id, 0.15)
   engine.filterFreq(id, params:get("filter_cutoff"))
   set_quality(id, params:get("quality"))
-  set_decay(id, params:get("decay_" .. id), params:get("length"))
-  set_amp(id, params:get("amp_" .. id), params:get("drive"))
+  set_decay(id, params:get(params:get("kit") .. "_decay_" .. id), params:get("length"))
+  set_amp(id, params:get(params:get("kit") .. "_amp_" .. id), params:get("drive"))
   
   screen_dirty = true
 end
@@ -396,16 +384,16 @@ local function midi_event(data)
       
       for k, v in pairs(current_kit.samples) do
         if v.tune == msg.cc then
-          params:set("tune_" .. k - 1, util.linlin(0, 127, specs.TUNE.minval, specs.TUNE.maxval, msg.val))
+          params:set(params:get("kit") .. "_tune_" .. k - 1, util.linlin(0, 127, specs.TUNE.minval, specs.TUNE.maxval, msg.val))
         end
         if v.decay == msg.cc then
-          params:set("decay_" .. k - 1, util.linlin(0, 127, specs.UNIPOLAR_DEFAULT_MAX.minval, specs.UNIPOLAR_DEFAULT_MAX.maxval, msg.val))
+          params:set(params:get("kit") .. "_decay_" .. k - 1, util.linlin(0, 127, specs.UNIPOLAR_DEFAULT_MAX.minval, specs.UNIPOLAR_DEFAULT_MAX.maxval, msg.val))
         end
         if v.pan == msg.cc then
-          params:set("pan_" .. k - 1, util.linlin(0, 127, ControlSpec.PAN.minval, ControlSpec.PAN.maxval, msg.val))
+          params:set(params:get("kit") .. "_pan_" .. k - 1, util.linlin(0, 127, ControlSpec.PAN.minval, ControlSpec.PAN.maxval, msg.val))
         end
         if v.amp == msg.cc then
-          params:set("amp_" .. k - 1, util.linlin(0, 127, specs.AMP.minval, specs.AMP.maxval, msg.val))
+          params:set(params:get("kit") .. "_amp_" .. k - 1, util.linlin(0, 127, specs.AMP.minval, specs.AMP.maxval, msg.val))
         end
       end
       
@@ -795,9 +783,9 @@ function SampleView.new()
   local sample_view = {
     tab_id = 1,
     tune_dial = UI.Dial.new(4.5, 18, 22, 0, -12, 12, 0.1, 0, {0}, "ST"),
-    decay_dial = UI.Dial.new(36, 31, 22, params:get("decay_" .. current_sample_id) * 100, 0, 100, 1, 0, nil, "%", "Decay"),
-    pan_dial = UI.Dial.new(67.5, 18, 22, params:get("pan_" .. current_sample_id) * 100, -100, 100, 1, 0, {0}, nil, "Pan"),
-    amp_dial = UI.Dial.new(99, 31, 22, params:get("amp_" .. current_sample_id), specs.AMP.minval, specs.AMP.maxval, 0.1, nil, {0}, "dB")
+    decay_dial = UI.Dial.new(36, 31, 22, params:get(params:get("kit") .. "_decay_" .. current_sample_id) * 100, 0, 100, 1, 0, nil, "%", "Decay"),
+    pan_dial = UI.Dial.new(67.5, 18, 22, params:get(params:get("kit") .. "_pan_" .. current_sample_id) * 100, -100, 100, 1, 0, {0}, nil, "Pan"),
+    amp_dial = UI.Dial.new(99, 31, 22, params:get(params:get("kit") .. "_amp_" .. current_sample_id), specs.AMP.minval, specs.AMP.maxval, 0.1, nil, {0}, "dB")
   }
   sample_view.pan_dial.active = false
   sample_view.amp_dial.active = false
@@ -813,16 +801,16 @@ function SampleView:enc(n, delta)
     
     if n == 2 then
       if self.tab_id == 1 then
-        params:delta("tune_" .. current_sample_id, delta)
+        params:delta(params:get("kit") .. "_tune_" .. current_sample_id, delta)
       else
-        params:delta("pan_" .. current_sample_id, delta)
+        params:delta(params:get("kit") .. "_pan_" .. current_sample_id, delta)
       end
       
     elseif n == 3 then
       if self.tab_id == 1 then
-        params:delta("decay_" .. current_sample_id, delta * 2)
+        params:delta(params:get("kit") .. "_decay_" .. current_sample_id, delta * 2)
       else
-        params:delta("amp_" .. current_sample_id, delta)
+        params:delta(params:get("kit") .. "_amp_" .. current_sample_id, delta)
       end
       
     end
@@ -878,17 +866,17 @@ function SampleView:redraw()
     
   elseif samples_meta[current_sample_id].ready then
   
-    self.tune_dial:set_value(params:get("tune_" .. current_sample_id))
-    self.decay_dial:set_value(params:get("decay_" .. current_sample_id) * 100)
-    self.pan_dial:set_value(params:get("pan_" .. current_sample_id) * 100)
-    self.amp_dial:set_value(params:get("amp_" .. current_sample_id))
+    self.tune_dial:set_value(params:get(params:get("kit") .. "_tune_" .. current_sample_id))
+    self.decay_dial:set_value(params:get(params:get("kit") .. "_decay_" .. current_sample_id) * 100)
+    self.pan_dial:set_value(params:get(params:get("kit") .. "_pan_" .. current_sample_id) * 100)
+    self.amp_dial:set_value(params:get(params:get("kit") .. "_amp_" .. current_sample_id))
     
     self.tune_dial:redraw()
     self.decay_dial:redraw()
     self.pan_dial:redraw()
     self.amp_dial:redraw()
     
-    if params:get("amp_" .. current_sample_id) > 2 then
+    if params:get(params:get("kit") .. "_amp_" .. current_sample_id) > 2 then
       screen.level(15)
       screen.move(110, 45)
       screen.text_center("!")
@@ -949,7 +937,9 @@ function redraw()
 end
 
 
-local function add_global_params()
+local function add_params()
+
+  -- Global params
   
   local kit_names = {}
   for _, v in ipairs(kits) do table.insert(kit_names, v.name) end
@@ -983,7 +973,7 @@ local function add_global_params()
   
   params:add{type = "control", id = "length", name = "Length", controlspec = specs.UNIPOLAR_DEFAULT_MAX, formatter = Formatters.unipolar_as_percentage, action = function(value)
     for k, _ in pairs(current_kit.samples) do
-      set_decay(k - 1, params:get("decay_" .. k - 1), value)
+      set_decay(k - 1, params:get(params:get("kit") .. "_decay_" .. k - 1), value)
     end
     screen_dirty = true
   end}
@@ -997,7 +987,7 @@ local function add_global_params()
   
   params:add{type = "control", id = "drive", name = "Drive", controlspec = specs.DRIVE, action = function(value)
     for k, _ in pairs(current_kit.samples) do
-      set_amp(k - 1, params:get("amp_" .. k - 1), value)
+      set_amp(k - 1, params:get(params:get("kit") .. "_amp_" .. k - 1), value)
     end
     screen_dirty = true
   end}
@@ -1020,8 +1010,51 @@ local function add_global_params()
   end}
   
   params:add_separator()
-  
-  num_global_params = params.count
+
+  -- Add kit params
+
+  for i = 1, #kits do
+    for k, v in ipairs(kits[i].samples) do
+      
+      if k > NUM_SAMPLES then break end
+      
+      local sample_id = k - 1
+
+      local file = string.sub(v.file, string.find(v.file, "/[^/]*$") + 1, string.find(v.file, ".[^.]*$") - 1)
+      local name_prefix = string.sub(file, 1, 7)
+    
+      params:add{type = "control", id = i .. "_tune_" .. sample_id, name = name_prefix .. " Tune", controlspec = specs.TUNE, formatter = Formatters.round(0.1), action = function(value)
+        engine.transpose(sample_id, value)
+        screen_dirty = true
+      end}
+      
+      params:add{type = "control", id = i .. "_decay_" .. sample_id, name = name_prefix .. " Decay", controlspec = specs.UNIPOLAR_DEFAULT_MAX, formatter = Formatters.unipolar_as_percentage, action = function(value)
+        set_decay(sample_id, value, params:get("length"))
+        screen_dirty = true
+      end}
+      
+      params:add{type = "control", id = i .. "_pan_" .. sample_id, name = name_prefix .. " Pan", controlspec = ControlSpec.PAN, formatter = Formatters.bipolar_as_pan_widget, action = function(value)
+        engine.pan(sample_id, value)
+        screen_dirty = true
+      end}
+      
+      params:add{type = "control", id = i .. "_amp_" .. sample_id, name = name_prefix .. " Amp", controlspec = specs.AMP, action = function(value)
+        set_amp(sample_id, value, params:get("drive"))
+        screen_dirty = true
+      end}
+
+      -- NOTE: Left this out for now, unsure how to show/hide it.
+      -- params:add_separator()
+
+      if i > 1 then
+        params:hide(i .. "_tune_" .. sample_id)
+        params:hide(i .. "_decay_" .. sample_id)
+        params:hide(i .. "_pan_" .. sample_id)
+        params:hide(i .. "_amp_" .. sample_id)
+      end
+
+    end
+  end
   
 end
 
@@ -1034,7 +1067,7 @@ function init()
   midi_in_device.event = midi_event
   
   load_kits()
-  add_global_params()
+  add_params()
   
   -- UI
   global_view = GlobalView.new()
